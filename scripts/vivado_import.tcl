@@ -43,13 +43,21 @@ set_property top RV32I46F5SPMMIOSoCTOP [current_fileset]
 add_files -fileset sim_1 -norecurse [file join $repo_root sim/tb_cpu_smoke.v]
 set_property top tb_cpu_smoke [get_filesets sim_1]
 
-add_files -fileset constrs_1 -norecurse [file join $repo_root constraints/minisys_fight_constraint.xdc]
+set xdc_file [file join $repo_root constraints/minisys_fight_constraint.xdc]
+add_files -fileset constrs_1 -norecurse $xdc_file
+set_property used_in_synthesis true [get_files $xdc_file]
+set_property used_in_implementation true [get_files $xdc_file]
 
-add_files -norecurse [list \
+set mem_files [list \
     [file join $repo_root mem/rom_init.mem] \
     [file join $repo_root mem/initial_data.mem] \
 ]
+add_files -norecurse $mem_files
+foreach mem_file $mem_files {
+    set_property file_type {Memory Initialization Files} [get_files $mem_file]
+    set_property used_in_synthesis true [get_files $mem_file]
+    set_property used_in_simulation true [get_files $mem_file]
+}
 
 update_compile_order -fileset sources_1
 update_compile_order -fileset sim_1
-

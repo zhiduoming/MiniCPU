@@ -11,8 +11,6 @@ set_property IOSTANDARD LVCMOS33 [get_ports btn_left]
 set_property PACKAGE_PIN P5 [get_ports btn_left]
 set_property IOSTANDARD LVCMOS33 [get_ports btn_right]
 set_property PACKAGE_PIN P4 [get_ports btn_right]
-set_property IOSTANDARD LVCMOS33 [get_ports btn_center]
-set_property PACKAGE_PIN P2 [get_ports btn_center]
 
 set_property IOSTANDARD LVCMOS33 [get_ports {switch[*]}]
 set_property PACKAGE_PIN Y9 [get_ports {switch[23]}]
