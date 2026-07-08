@@ -24,7 +24,6 @@ foreach mem_file [list $rom_file $ram_file] {
         add_files -norecurse $mem_file
     }
     if {[llength [get_files -quiet $mem_file]] != 0} {
-        set_property file_type {Memory Initialization Files} [get_files $mem_file]
         set_property used_in_synthesis true [get_files $mem_file]
         set_property used_in_simulation true [get_files $mem_file]
     }
@@ -42,4 +41,3 @@ update_compile_order -fileset sources_1
 puts "MiniCPU Vivado project refreshed."
 puts "XDC: $xdc_file"
 puts "ROM: $rom_file"
-

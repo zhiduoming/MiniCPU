@@ -54,7 +54,6 @@ set mem_files [list \
 ]
 add_files -norecurse $mem_files
 foreach mem_file $mem_files {
-    set_property file_type {Memory Initialization Files} [get_files $mem_file]
     set_property used_in_synthesis true [get_files $mem_file]
     set_property used_in_simulation true [get_files $mem_file]
 }

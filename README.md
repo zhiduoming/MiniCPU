@@ -74,13 +74,13 @@ scripts/rtl_files.f
 scripts/sim_files.f
 ```
 
-指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认值为：
+指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 
 ```text
-mem/rom_init.mem
+rom_init.mem
 ```
 
-建议从仓库根目录运行仿真，避免相对路径找不到初始化文件。
+该文件在仓库中的位置是 `mem/rom_init.mem`。Vivado 工程会把它作为 memory 初始化文件加入项目；如果使用命令行仿真，请确认仿真工作目录能找到这个文件，或覆盖 `ROM_INIT_FILE` 参数。
 
 ## 课设文档
 
@@ -120,4 +120,3 @@ git push -u origin feature/your-task
 - Vivado 生成的 `.runs/`、`.sim/`、`.cache/`、`.xpr` 等文件已在 `.gitignore` 中忽略。
 - 如果更换 ROM 程序，请更新 `mem/rom_init.mem`，或在实例化 `InstructionMemory` 时覆盖 `ROM_INIT_FILE` 参数。
 - 如果新增 `.v` 文件，需要同步更新 `scripts/rtl_files.f` 和 `scripts/vivado_import.tcl`。
-
