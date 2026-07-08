@@ -1,0 +1,32 @@
+# Vivado generated files
+*.jou
+*.log
+*.str
+*.wdb
+*.vcd
+*.xpr
+*.xsa
+*.bit
+*.ltx
+*.dcp
+*.rpt
+*.runs/
+*.sim/
+*.srcs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.gen/
+
+# Simulator outputs
+*.out
+*.vvp
+*.fst
+*.ghw
+
+# Local/editor files
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
