@@ -7,7 +7,7 @@
 `include "csr.vh"
 
 module InstructionMemory #(
-    parameter ROM_INIT_FILE = "rom_init.mem"
+    parameter ROM_INIT_FILE = "program.hex"
 )(
     input [31:0] pc,
     output reg [31:0] instruction,

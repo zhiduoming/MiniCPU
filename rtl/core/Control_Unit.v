@@ -12,6 +12,7 @@ module ControlUnit (
 	input IF_ID_stall,
 	input [6:0] opcode, // opcode from Instruction Decoder
 	input [2:0] funct3, // funct3 from Instruction Decoder
+	input [4:0] rs1,    // rs1 field (also the zimm for CSRRWI/CSI variants)
     
 	output reg jump,
 	output reg branch,
@@ -26,7 +27,14 @@ module ControlUnit (
 );
 
     always @(*) begin
-		pc_stall = (!write_done || !trap_done || !csr_ready || IF_ID_stall);
+		// NOTE: !csr_ready is intentionally NOT part of pc_stall. csr_ready
+		// oscillates every cycle while a CSR instruction is in the WB stage
+		// (csr_processing toggles), and freezing the PC on those cycles while
+		// IF/ID is *not* frozen desynchronises the pipeline (instructions get
+		// re-fetched). CSR access is single-cycle (combinational read + 1-cycle
+		// register write), so the PC can advance normally; the RAW hazard
+		// stall (IF_ID_stall) already freezes PC+front-end when needed.
+		pc_stall = (!write_done || !trap_done || IF_ID_stall);
         jump = 1'b0;
         branch = 1'b0;
         alu_src_A_select = `ALU_SRC_A_NONE;
@@ -271,8 +279,19 @@ module ControlUnit (
 				// No branch
 				branch = 0;
 
-				// Do CSR operation or not by funct3
-				csr_write_enable = (funct3 == 0) ? 0 : 1;
+				// Only a TRUE write must set csr_write_enable:
+				//   - CSRRW / CSRRWI always write (rd <- old, CSR <- src)
+				//   - CSRRS / CSRRC / CSRRSI / CSRRCI write only when src != 0
+				//     (src == x0 is a pure read and must NOT be treated as a
+				//      write, else the Hazard_Unit mistakes it for a
+				//      write-in-flight and livelocks the raw hazard stall).
+				//   - funct3 == 0 (ECALL/EBREAK) never writes.
+				if (funct3 == `CSR_NONE)
+					csr_write_enable = 1'b0;
+				else if (funct3 == `CSR_CSRRW || funct3 == `CSR_CSRRWI)
+					csr_write_enable = 1'b1;
+				else // CSRRS / CSRRC / CSRRSI / CSRRCI
+					csr_write_enable = (rs1 != 5'b0);
 
 				if (funct3 == 3'b0) begin
 					// No alu operation

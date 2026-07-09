@@ -6,6 +6,10 @@ module EX_MEM_Register #(
     input wire reset,
     input wire flush,
     input wire EX_MEM_stall,
+    // bubble: when asserted (e.g. during a front-end RAW stall) the register
+    // captures a NOP instead of the EX-stage output, so a frozen EX
+    // instruction is not re-fed into MEM/WB (which would re-commit it).
+    input wire bubble,
 
     // signals from ID/EX register
     input wire [XLEN-1:0] EX_pc, // for debugging
@@ -74,6 +78,26 @@ always @(posedge clk or posedge reset) begin
         MEM_alu_result <= {XLEN{1'b0}};
     end else begin
         if (flush) begin
+            MEM_pc <= {XLEN{1'b0}};
+            MEM_pc_plus_4 <= {XLEN{1'b0}};
+            MEM_instruction <= 32'h0000_0013; // ADDI x0, x0, 0 = RISC-V NOP, HINT
+
+            MEM_memory_read <= 1'b0;
+            MEM_memory_write <= 1'b0;
+            MEM_register_file_write_data_select <= 3'b0;
+            MEM_register_write_enable <= 1'b0;
+            MEM_csr_write_enable <= 1'b0;
+            MEM_opcode <= 7'b0;
+            MEM_funct3 <= 3'b0;
+            MEM_rs1 <= 5'b0;
+            MEM_rd <= 5'b0;
+            MEM_read_data2 <= {XLEN{1'b0}};
+            MEM_imm <= {XLEN{1'b0}};
+            MEM_raw_imm <= 20'b0;
+            MEM_csr_read_data <= {XLEN{1'b0}};
+
+            MEM_alu_result <= {XLEN{1'b0}};
+        end else if (flush || bubble) begin
             MEM_pc <= {XLEN{1'b0}};
             MEM_pc_plus_4 <= {XLEN{1'b0}};
             MEM_instruction <= 32'h0000_0013; // ADDI x0, x0, 0 = RISC-V NOP, HINT

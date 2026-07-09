@@ -21,7 +21,9 @@ module tb_cpu_smoke;
     wire [31:0] debug_reg_data;
     wire [31:0] debug_alu_result;
 
-    RV32I46F5SPMMIO dut (
+    RV32I46F5SPMMIO #(
+        .ROM_INIT_FILE("mem/smoke.hex")
+    ) dut (
         .clk(clk),
         .reset(reset),
         .UART_busy(UART_busy),

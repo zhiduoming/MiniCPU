@@ -40,8 +40,13 @@ add_files -norecurse $rtl_files
 set_property include_dirs [file join $repo_root include] [current_fileset]
 set_property top RV32I46F5SPMMIOSoCTOP [current_fileset]
 
-add_files -fileset sim_1 -norecurse [file join $repo_root sim/tb_cpu_smoke.v]
-set_property top tb_cpu_smoke [get_filesets sim_1]
+add_files -fileset sim_1 -norecurse [list \
+    [file join $repo_root sim/tb_selfcheck.v] \
+    [file join $repo_root sim/tb_csr.v] \
+    [file join $repo_root sim/tb_cpu_smoke.v] \
+    [file join $repo_root sim/tb_min.v] \
+]
+set_property top tb_selfcheck [get_filesets sim_1]
 
 set xdc_file [file join $repo_root constraints/minisys_fight_constraint.xdc]
 add_files -fileset constrs_1 -norecurse $xdc_file
@@ -49,6 +54,9 @@ set_property used_in_synthesis true [get_files $xdc_file]
 set_property used_in_implementation true [get_files $xdc_file]
 
 set mem_files [list \
+    [file join $repo_root mem/program.hex] \
+    [file join $repo_root mem/csr_test.hex] \
+    [file join $repo_root mem/smoke.hex] \
     [file join $repo_root mem/rom_init.mem] \
     [file join $repo_root mem/initial_data.mem] \
 ]

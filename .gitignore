@@ -23,10 +23,15 @@
 *.vvp
 *.fst
 *.ghw
+sim_*.txt
+csr_*.txt
+min_*.txt
+simrun.exe
+csr_sim
+*.zip
 
 # Local/editor files
 .vscode/
 .idea/
 Thumbs.db
 desktop.ini
-

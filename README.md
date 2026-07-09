@@ -37,8 +37,10 @@
 | --- | --- | --- |
 | FPGA 板级顶层 | `rtl/top/46F5SP_MMIO_SoC_TOP.v` | `RV32I46F5SPMMIOSoCTOP` |
 | CPU 系统顶层 | `rtl/top/RV32I46F_5SP_MMIO.v` | `RV32I46F5SPMMIO` |
-| 冒烟测试 testbench | `sim/tb_cpu_smoke.v` | `tb_cpu_smoke` |
-| ROM 初始化 | `mem/rom_init.mem` | - |
+| 主自检 testbench | `sim/tb_selfcheck.v` | `tb_selfcheck` |
+| CSR 专项 testbench | `sim/tb_csr.v` | `tb_csr` |
+| JAL 冒烟测试 testbench | `sim/tb_cpu_smoke.v` | `tb_cpu_smoke` |
+| 默认 ROM 初始化 | `mem/program.hex` | - |
 | FPGA 约束 | `constraints/minisys_fight_constraint.xdc` | - |
 
 ## Vivado 使用方式
@@ -61,7 +63,7 @@ source scripts/vivado_import.tcl
 
 - `rtl/` 下的全部设计文件
 - `include/` 作为头文件搜索路径
-- `sim/tb_cpu_smoke.v` 作为仿真文件
+- `sim/` 下的 testbench，默认仿真顶层为 `tb_selfcheck`
 - `constraints/minisys_fight_constraint.xdc` 作为约束文件
 - `mem/` 下的初始化文件
 
@@ -74,13 +76,19 @@ scripts/rtl_files.f
 scripts/sim_files.f
 ```
 
+如果本机已安装 Icarus Verilog，并且 `iverilog`/`vvp` 已加入 `PATH`，可在仓库根目录运行：
+
+```powershell
+scripts\run_selfcheck.bat
+```
+
 指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 
 ```text
-rom_init.mem
+program.hex
 ```
 
-该文件在仓库中的位置是 `mem/rom_init.mem`。Vivado 工程会把它作为 memory 初始化文件加入项目；如果使用命令行仿真，请确认仿真工作目录能找到这个文件，或覆盖 `ROM_INIT_FILE` 参数。
+该文件在仓库中的位置是 `mem/program.hex`，用于主自检。另有 `mem/csr_test.hex` 用于 CSR RAW 专项测试，`mem/smoke.hex` 用于 JAL 冒烟测试。Vivado 工程会把这些 memory 初始化文件加入项目；命令行仿真时 testbench 会通过 `ROM_INIT_FILE` 参数选择对应文件。
 
 ## 课设文档
 
@@ -118,5 +126,5 @@ git push -u origin feature/your-task
 
 - 当前仓库只保存源代码、约束、初始化文件和文档模板，不提交 Vivado 自动生成目录。
 - Vivado 生成的 `.runs/`、`.sim/`、`.cache/`、`.xpr` 等文件已在 `.gitignore` 中忽略。
-- 如果更换 ROM 程序，请更新 `mem/rom_init.mem`，或在实例化 `InstructionMemory` 时覆盖 `ROM_INIT_FILE` 参数。
+- 如果更换主自检 ROM 程序，请更新 `mem/program.hex`，或在实例化 `RV32I46F5SPMMIO` / `InstructionMemory` 时覆盖 `ROM_INIT_FILE` 参数。
 - 如果新增 `.v` 文件，需要同步更新 `scripts/rtl_files.f` 和 `scripts/vivado_import.tcl`。

@@ -3,7 +3,8 @@
 
 
 module RV32I46F5SPMMIO #(
-    parameter XLEN = 32
+    parameter XLEN = 32,
+    parameter ROM_INIT_FILE = "program.hex"
 )(
     input clk,
     input reset,
@@ -44,7 +45,7 @@ module RV32I46F5SPMMIO #(
     wire [31:0] rom_address;
     wire [31:0] rom_read_data;
 
-    assign IF_imm = {{19{instruction[31]}}, instruction[7], instruction[30:25], instruction[11:8], 1'b0};
+    assign IF_imm = {{20{instruction[31]}}, instruction[7], instruction[30:25], instruction[11:8], 1'b0};
     assign IF_opcode = (instruction[6:0]);
 
     // Instruction Decoder
@@ -307,6 +308,7 @@ module RV32I46F5SPMMIO #(
         .trap_done(trap_done),
         .csr_ready(csr_ready),
         .IF_ID_stall(IF_ID_stall),
+        .rs1(rs1),
         .pc_stall(pc_stall),
         .jump(jump),
         .branch(branch),
@@ -411,6 +413,8 @@ module RV32I46F5SPMMIO #(
         .ID_rs1(rs1),
         .ID_rs2(rs2),
         .ID_raw_imm(raw_imm[11:0]),
+        .ID_opcode(opcode),
+        .ID_funct3(funct3),
         .EX_csr_write_enable(EX_csr_write_enable),
         .MEM_rd(MEM_rd),
         .MEM_register_write_enable(MEM_register_write_enable),
@@ -460,7 +464,9 @@ module RV32I46F5SPMMIO #(
         .raw_imm(raw_imm)
     );
 
-    InstructionMemory instruction_memory (
+    InstructionMemory #(
+        .ROM_INIT_FILE(ROM_INIT_FILE)
+    ) instruction_memory (
         .pc(pc),
         .instruction(im_instruction),
         .rom_address(rom_address),
@@ -614,6 +620,7 @@ module RV32I46F5SPMMIO #(
         .reset(reset),
         .flush(EX_MEM_flush),
         .EX_MEM_stall(EX_MEM_stall),
+        .bubble(hazard_unit.csr_bubble),
         .EX_pc(EX_pc),
         .EX_pc_plus_4(EX_pc_plus_4),
         .EX_instruction(EX_instruction),
@@ -735,7 +742,19 @@ module RV32I46F5SPMMIO #(
             alu_normal_source_b = {27'b0, EX_imm[4:0]};
         end
         else if (EX_alu_src_B_select == `ALU_SRC_B_CSR) begin
-            alu_normal_source_b = csr_forward_data;
+            // CRITICAL: for CSRRS/CSRRC/CSRRSI/CSRRCI the CSR write value is
+            // (old_csr OP src). The "old_csr" must be the value latched into
+            // EX_csr_read_data at the ID->EX boundary for THIS instruction, NOT
+            // the live csr_read_out/csr_forward_data. csr_read_out is
+            // combinational on the ID-stage instruction's CSR address
+            // (csr_read_address = raw_imm[11:0]); when this CSR instruction is
+            // in EX, the ID stage holds a DIFFERENT (often gap/NOP) instruction,
+            // so the live value would be wrong (e.g. 0 for a NOP -> mtvec gets
+            // written with src only). The RAW stall (Hazard_Unit) already holds
+            // the instruction in ID until any prior CSR write has committed, so
+            // EX_csr_read_data (captured at the crossing) is always the
+            // post-write value -- exactly what the write needs.
+            alu_normal_source_b = EX_csr_read_data;
         end
         else begin
             alu_normal_source_b = 32'b0;
@@ -802,8 +821,11 @@ module RV32I46F5SPMMIO #(
     end
 
     // ????
+    // debug_pc 取 IF ???PC(pc), debug_instruction ????????PC??????
+    // ??(im_instruction = data[pc[31:2]]), ???????????????????
+    // ????? WB_instruction(????4?????), ????? PC ??????????????
     assign debug_pc = pc;
-    assign debug_instruction = WB_instruction;
+    assign debug_instruction = im_instruction;
     assign debug_reg_addr = WB_rd;
     assign debug_reg_data = register_file_write_data;
     assign debug_alu_result = WB_alu_result;

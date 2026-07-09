@@ -12,7 +12,7 @@ module CSRFile #(
     input [XLEN-1:0] csr_write_data,      // data to write
     input instruction_retired,
 
-    output reg [XLEN-1:0] csr_read_out,   // data from CSR Unit
+    output [XLEN-1:0] csr_read_out,   // data from CSR Unit (combinational: always current CSR value)
     output reg csr_ready                  // signal to stall the process while accessing the CSR until it outputs the desired value.
     );
 
@@ -91,6 +91,12 @@ module CSRFile #(
       end
     end
 
+    // csr_read_out is combinational so a CSR read samples the CURRENT CSR
+    // value (not a 1-cycle-late latched value). This is what lets a following
+    // CSR read observe a just-written value and fixes the CSR RAW (Test 16)
+    // read-after-write hazard.
+    assign csr_read_out = csr_read_data;
+
     // Reset Operation
     always @(posedge clk or posedge reset) begin
       if (reset) begin
@@ -101,7 +107,6 @@ module CSRFile #(
         minstret <= DEFAULT_minstret;
 
         csr_processing <= 1'b0;
-        csr_read_out <= {XLEN{1'b0}};
       end else begin
         mcycle <= mcycle + 1;
         
@@ -111,12 +116,9 @@ module CSRFile #(
 
         if (csr_access && !csr_processing) begin
           csr_processing <= 1'b1;
-          csr_read_out <= csr_read_data;
         end else if (csr_processing) begin
           csr_processing <= 1'b0;
-          csr_read_out <= csr_read_data;
         end else if (csr_write_enable) begin
-          csr_read_out <= csr_read_data;
         end
 
         // Write Operation
