@@ -98,7 +98,7 @@ source E:/Code/cpu/scripts/vivado_run_m_ext_sim.tcl
 
 测试程序通过 UART 输出结果：成功输出 `OK`；失败输出 `ID=xx ACT=xxxxxxxx EXP=xxxxxxxx FAIL`，其中 `ID` 是测试编号，`ACT` 是 CPU 实际算出的值，`EXP` 是测试期望值。
 
-板级顶层默认把 100MHz 输入时钟分频为 10MHz 系统时钟，以便单周期组合除法在 FPGA 上有更宽松的时序余量；UART 分频已同步适配，串口助手仍使用 115200 8N1。
+板级顶层默认把 100MHz 输入时钟分频为 5MHz 系统时钟，以便单周期组合乘除法、cache/forwarding 组合路径在 FPGA 上有更宽松的时序余量；UART 分频已同步适配，串口助手仍使用 115200 8N1。
 
 指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 

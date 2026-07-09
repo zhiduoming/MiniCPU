@@ -1,5 +1,5 @@
 module UARTTX #(
-    parameter integer CLK_FREQ_HZ = 10_000_000,
+    parameter integer CLK_FREQ_HZ = 5_000_000,
     parameter integer BAUD_RATE = 115200
 )(
     input clk,

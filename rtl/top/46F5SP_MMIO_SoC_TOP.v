@@ -16,7 +16,7 @@
 module RV32I46F5SPMMIOSoCTOP #(
     parameter XLEN = 32,
     parameter integer INPUT_CLK_HZ = 100_000_000,
-    parameter integer SYS_CLK_HZ = 10_000_000
+    parameter integer SYS_CLK_HZ = 5_000_000
 )(
     input  clk,                      // 100MHz ????
     input  reset_n,                  // ???? (S6????)
