@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Generate program.hex: a self-test RISC-V program for the RV32IM CPU.
-# Tests arithmetic, memory, CSR, and multiply/divide extension instructions; prints
-# "OK\r\n" on success, "FAIL\r\n" on any mismatch.
+# Tests arithmetic, memory, CSR, and multiply/divide extension instructions.
+# After printing "OK\r\n", it reads cache performance counters via MMIO
+# (0x10010020+) and prints a cache performance report over UART.
 import sys
 
 OPC_R=0x33; OPC_I=0x13; OPC_L=0x03; OPC_S=0x23; OPC_B=0x63; OPC_LUI=0x37; OPC_JAL=0x6F; OPC_JALR=0x67; OPC_SYS=0x73
@@ -20,7 +21,6 @@ def asm_I(funct3,rd,rs1,imm):
     return (imm<<20)|(rs1<<15)|(funct3<<12)|(rd<<7)|OPC_I
 
 def chk_imm12(imm):
-    # 12-bit signed immediate range for ADDI / loads / stores
     if imm < -2048 or imm > 2047:
         raise Exception("immediate %d out of 12-bit signed range (-2048..2047)" % imm)
 def asm_S(funct3,rs1,rs2,imm):
@@ -34,6 +34,232 @@ def asm_U(rd,imm20):
 def asm_J(rd,imm):
     i20=(imm>>20)&1; i10_1=(imm>>1)&0x3FF; i11=(imm>>11)&1; i19_12=(imm>>12)&0xFF
     return (i20<<31)|(i10_1<<21)|(i11<<20)|(i19_12<<12)|(rd<<7)|OPC_JAL
+
+# ---------------------------------------------------------------
+#  RISC-V assembly helpers for the perf-report (generated inline)
+# ---------------------------------------------------------------
+
+def putc(ch):
+    """Return ASM lines (PUTC macro) to send a character via UART."""
+    return "    PUTC 0x%02X\n" % ch
+
+def put_str(s):
+    """Return ASM lines (PUTC macros) to print a string."""
+    out = ""
+    for ch in s:
+        out += putc(ord(ch))
+    return out
+
+# put_dec(x10) -- print unsigned decimal number using RV32M DIVU/REMU.
+# Uses x16 as a scratch stack pointer, x17 as digit count, clobbers x10/x11/x12/x20/x31.
+PUT_DEC_ASM = """
+# ---- put_dec(x10) ----
+put_dec:
+    BNE   x10, x0, pd_nz
+""".lstrip() + putc(0x30) + """
+    JALR  x0, 0(x1)
+pd_nz:
+    ADDI  x17, x0, 0       # digit_count = 0
+pd_lp:
+    ADDI  x11, x0, 10      # divisor = 10
+    REMU  x12, x10, x11    # digit = n % 10
+    DIVU  x10, x10, x11    # n = n / 10
+    SW    x12, 0(x16)      # push digit
+    ADDI  x16, x16, -4
+    ADDI  x17, x17, 1
+    BNE   x10, x0, pd_lp
+pd_pr:
+    ADDI  x16, x16, 4      # pop digit
+    LW    x20, 0(x16)
+    ADDI  x20, x20, 0x30   # ASCII
+    LW    x31, 4(x30)
+    ANDI  x31, x31, 1
+    BNE   x31, x0, pd_wt
+    SW    x20, 0(x30)
+    ADDI  x17, x17, -1
+    BNE   x17, x0, pd_pr
+    JALR  x0, 0(x1)
+pd_wt:
+    LW    x31, 4(x30)      # re-check UART busy
+    ANDI  x31, x31, 1
+    BNE   x31, x0, pd_wt
+    SW    x20, 0(x30)
+    ADDI  x17, x17, -1
+    BNE   x17, x0, pd_pr
+    JALR  x0, 0(x1)
+"""
+
+# ---------------------------------------------------------------
+#  Perf-report main code (replaces bench_start .. done)
+# ---------------------------------------------------------------
+PERF_REPORT_ASM = """
+# ---- put_ch(x20) --- send char in x20 via UART, returns via x1 ----
+put_ch:
+    LW    x31, 4(x30)
+    ANDI  x31, x31, 1
+    BNE   x31, x0, put_ch
+    SW    x20, 0(x30)
+    JALR  x0, 0(x1)
+
+perf_report:
+    # x30 = UART base (0x10010000, set at boot)
+    # x16 = stack pointer for put_dec, placed at the top of the 4KB data RAM
+    LUI   x16, 0x10001
+    ADDI  x16, x16, -4         # x16 = 0x10000FFC
+
+    # ---- Run bench loop for meaningful perf data ----
+    ADDI  x27, x0, 500        # outer iteration count
+pr_outer:
+    ADDI  x25, x0, 100        # inner loop counter
+pr_inner:
+    ADDI  x25, x25, -1
+    BNE   x25, x0, pr_inner
+    ADDI  x27, x27, -1
+    BNE   x27, x0, pr_outer
+
+    # ---- Read PerfMon counters from MMIO ----
+    LW    x5, 0x20(x30)       # x5 = r_cyc   (0x10010020)
+    LW    x6, 0x24(x30)       # x6 = r_inst  (0x10010024)
+    LW    x7, 0x28(x30)       # x7 = r_acc   (0x10010028)
+    LW    x8, 0x2C(x30)       # x8 = r_hit   (0x1001002C)
+    LW    x9, 0x30(x30)       # x9 = r_miss  (0x10010030)
+    LW    x10, 0x34(x30)      # x10 = ic_mode (0x10010034)
+
+    # ---- Print report header ----
+""".lstrip() + put_str("[CACHE PERF]\r\n") + \
+    put_str("MODE=") + """
+    BNE   x10, x0, pr_4way
+""" + put_str("DIRECT\r\n") + """
+    JAL   x0, pr_cyc_sec
+pr_4way:
+""" + put_str("4WAY\r\n") + """
+
+pr_cyc_sec:
+""" + put_str("CYC=") + """
+    ADDI  x10, x5, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str(" INST=") + """
+    ADDI  x10, x6, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str("\r\n") + put_str("CPI=") + """
+    # Compute CPI*100 = (cyc * 100) / inst
+    SLLI  x10, x5, 6          # cyc << 6  = cyc*64
+    SLLI  x11, x5, 5          # cyc << 5  = cyc*32
+    ADD   x10, x10, x11       # cyc*96
+    SLLI  x11, x5, 2          # cyc << 2  = cyc*4
+    ADD   x10, x10, x11       # cyc*100
+    ADDI  x11, x6, 0          # divisor = inst
+    BNE   x11, x0, cpi_div    # skip if inst != 0
+    ADDI  x11, x0, 1
+cpi_div:
+    DIVU  x10, x10, x11       # x10 = CPI*100
+    # Split into integer . fraction
+    ADDI  x11, x0, 100
+    REMU  x18, x10, x11       # save frac_part
+    DIVU  x17, x10, x11       # save int_part
+    # Print integer part
+    ADDI  x10, x17, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + putc(0x2E) + """  # '.'
+    # Print fraction as 2 digits
+    ADDI  x11, x0, 10
+    ADDI  x10, x18, 0
+    REMU  x18, x10, x11       # digit2
+    DIVU  x17, x10, x11       # digit1
+    ADDI  x20, x17, 0x30
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_ch
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+    ADDI  x20, x18, 0x30
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_ch
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str("\r\n") + put_str("ACC=") + """
+    ADDI  x10, x7, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str(" HIT=") + """
+    ADDI  x10, x8, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str(" MISS=") + """
+    ADDI  x10, x9, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str("\r\n") + put_str("HR=") + """
+    # Compute HR*10000 = (hit * 10000) / acc
+    SLLI  x10, x8, 13         # hit << 13 = hit*8192
+    SLLI  x11, x8, 10         # hit << 10 = hit*1024
+    ADD   x10, x10, x11       # hit*9216
+    SLLI  x11, x8, 9          # hit << 9  = hit*512
+    ADD   x10, x10, x11       # hit*9728
+    SLLI  x11, x8, 8          # hit << 8  = hit*256
+    ADD   x10, x10, x11       # hit*9984
+    SLLI  x11, x8, 4          # hit << 4  = hit*16
+    ADD   x10, x10, x11       # hit*10000
+    ADDI  x11, x7, 0          # divisor = acc
+    BNE   x11, x0, hr_div
+    ADDI  x11, x0, 1
+hr_div:
+    DIVU  x10, x10, x11       # x10 = HR*100
+    # Split into integer . fraction
+    ADDI  x11, x0, 100
+    REMU  x18, x10, x11
+    DIVU  x17, x10, x11
+    # Print integer part
+    ADDI  x10, x17, 0
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_dec
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + putc(0x2E) + """  # '.'
+    # Print fraction as 2 digits
+    ADDI  x11, x0, 10
+    ADDI  x10, x18, 0
+    REMU  x18, x10, x11
+    DIVU  x17, x10, x11
+    ADDI  x20, x17, 0x30
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_ch
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+    ADDI  x20, x18, 0x30
+    SW    x1, 0(x16)
+    ADDI  x16, x16, -4
+    JAL   x1, put_ch
+    LW    x1, 4(x16)
+    ADDI  x16, x16, 4
+""" + put_str("%\r\n") + """
+done:
+    JAL   x0, done
+"""
 
 ASM = r"""
     LUI   x30, 0x10010        # UART TX base = 0x10010000
@@ -410,13 +636,19 @@ print_ok:
     PUTC 0x4B
     PUTC 0x0D
     PUTC 0x0A
-    JAL   x0, done
-done:
-    JAL   x0, done
+    # ---- after OK, run perf report (software) ----
+    JAL   x0, perf_report
 sub_routine:
     ADDI  x24, x0, 0xAB
     JALR  x0, 0(x1)            # return to link stored in x1
 """
+
+# Append the helper subroutines + perf report code
+ASM += PUT_DEC_ASM + PERF_REPORT_ASM
+
+# ---------------------------------------------------------------
+#  Parse / encode / simulate (unchanged)
+# ---------------------------------------------------------------
 
 def parse():
     raw=[]; labels={}
@@ -457,6 +689,7 @@ def parse():
 def encode(raw,labels):
     code=[]
     for idx,(op,args) in enumerate(raw):
+
         a=pc=idx*4
         if op=='LUI':
             rd=reg(args[0]); imm20=int(args[1],0)
@@ -590,8 +823,8 @@ def encode(raw,labels):
 
 def parse_off(s):
     import re
-    m=re.match(r'(-?\d+)\(x(\d+)\)',s)
-    return int(m.group(1)), int(m.group(2))
+    m=re.match(r'(-?(?:0x[0-9a-fA-F]+|\d+))\(x(\d+)\)',s)
+    return int(m.group(1), 0), int(m.group(2))
 
 def simulate(code):
     regs=[0]*32
@@ -615,7 +848,7 @@ def simulate(code):
     }
     csr_writable={0x305, 0x341, 0x342}        # only mtvec/mepc/mcause are writable
     mcycle=0; minstret=0
-    for _ in range(20000):
+    for _ in range(200000):
         idx=pc>>2
         if idx>=len(code): break
         inst=code[idx]
@@ -774,7 +1007,7 @@ code=encode(raw,labels)
 uart=simulate(code)
 out=''.join(chr(b) for b in uart)
 print("Simulated UART output:", repr(out))
-if out=="OK\r\n":
+if out.startswith("OK\r\n") and "FAIL" not in out:
     print("Result: PASS")
 elif "FAIL" in out:
     tid=out.split("FAIL")[0]

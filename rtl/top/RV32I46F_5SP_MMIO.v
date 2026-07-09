@@ -10,13 +10,14 @@ module RV32I46F5SPMMIO #(
     input reset,
     input UART_busy,
     input manual_stall,                    // ?????????S5???
-    
+    input icache_mode,                     // SW18: 0=direct-mapped, 1=4-way
+
     output wire [31:0] retire_instruction,
     output wire [7:0] mmio_uart_tx_data,
     output wire mmio_uart_tx_start,
     output wire instruction_retired,       // ?????????LED??
     output wire trapped,                   // ????????????
-    
+
     output [31:0] debug_pc,
     output [31:0] debug_instruction,
     output [4:0]  debug_reg_addr,
@@ -34,8 +35,12 @@ module RV32I46F5SPMMIO #(
     wire [XLEN-1:0] pc_plus_4_signal;
     wire [XLEN-1:0] next_pc;
     
-    // Instruction Memory and Debug Interface
-    wire [31:0] im_instruction;
+    // Instruction Memory / Cache and Debug Interface
+    wire [31:0] ic_cpu_data;
+    wire        ic_stall, ic_access, ic_hit, ic_miss, ic_ready;
+    wire [31:0] rom_cache_data;
+    wire        ic_mem_req;
+    wire [31:0] ic_mem_addr;
     wire [31:0] dbg_instruction = 32'b00000001011110110000110000110011; //add x24 = x22 + x23 = FFFF_FFBC + ABAD_BB02 = ABADBABE
     reg [31:0] instruction;
     wire [XLEN-1:0] IF_imm;
@@ -242,8 +247,16 @@ module RV32I46F5SPMMIO #(
     wire csr_write_enable_source;
     assign csr_write_enable_source = tc_csr_write_enable ? tc_csr_write_enable : WB_csr_write_enable;
 
+    // PerfMon counter wires (MMIO-readable at 0x10010020+)
+    wire [31:0] perf_cyc, perf_inst, perf_acc, perf_hit, perf_miss;
+    wire [31:0] mmio_perf_read_data;
+    wire        perf_read_hit;
+
     wire [XLEN-1:0] data_memory_read_data_muxed;
-    assign data_memory_read_data_muxed = mmio_uart_status_hit ? mmio_uart_status : data_memory_read_data;
+    assign data_memory_read_data_muxed =
+        perf_read_hit       ? mmio_perf_read_data :
+        mmio_uart_status_hit ? mmio_uart_status :
+        data_memory_read_data;
 
     // ------------------------------------------------------------
     // ??????
@@ -336,7 +349,7 @@ module RV32I46F5SPMMIO #(
 
     DataMemory data_memory (
         .clk(clk),
-        .write_enable(MEM_memory_write && !mmio_uart_status_hit),
+        .write_enable(MEM_memory_write && !mmio_uart_status_hit && !perf_read_hit),
         .address(MEM_alu_result),
         .write_data(data_memory_write_data),
         .write_mask(write_mask),
@@ -444,7 +457,8 @@ module RV32I46F5SPMMIO #(
         .IF_ID_stall(IF_ID_stall),
         .ID_EX_stall(ID_EX_stall),
         .EX_MEM_stall(EX_MEM_stall),
-        .MEM_WB_stall(MEM_WB_stall)
+        .MEM_WB_stall(MEM_WB_stall),
+        .icache_stall(ic_stall)
     );
 
     ImmediateGenerator immediate_generator (
@@ -467,10 +481,44 @@ module RV32I46F5SPMMIO #(
     InstructionMemory #(
         .ROM_INIT_FILE(ROM_INIT_FILE)
     ) instruction_memory (
-        .pc(pc),
-        .instruction(im_instruction),
+        .cache_addr(ic_mem_addr),
+        .cache_data(rom_cache_data),
         .rom_address(rom_address),
         .rom_read_data(rom_read_data)
+    );
+
+    // ---- Instruction Cache (direct-mapped / 4-way, selectable via SW18) ----
+    InstructionCache icache (
+        .clk(clk),
+        .reset(reset),
+        .mode(icache_mode),
+        .cpu_addr(pc),
+        .cpu_stall(IF_ID_stall),     // don't fetch while the IF stage is frozen
+        .cpu_data(ic_cpu_data),
+        .cpu_ready(ic_ready),
+        .ic_stall(ic_stall),
+        .ic_access(ic_access),
+        .ic_hit(ic_hit),
+        .ic_miss(ic_miss),
+        .mem_addr(ic_mem_addr),
+        .mem_data(rom_cache_data),
+        .mem_req(ic_mem_req)
+    );
+
+    // ---- Performance Monitor: counts cycles / ICache stats ----
+    PerfMon perfmon (
+        .clk(clk),
+        .reset(reset),
+        .instruction_retired(instruction_retired),
+        .ic_access(ic_access),
+        .ic_hit(ic_hit),
+        .ic_miss(ic_miss),
+        .ic_mode(icache_mode),
+        .r_cyc(perf_cyc),
+        .r_inst(perf_inst),
+        .r_acc(perf_acc),
+        .r_hit(perf_hit),
+        .r_miss(perf_miss)
     );
 
     MMIO_Interface mmio_interface (
@@ -483,7 +531,16 @@ module RV32I46F5SPMMIO #(
         .mmio_uart_tx_data(mmio_uart_tx_data),
         .mmio_uart_status(mmio_uart_status),
         .mmio_uart_tx_start(mmio_uart_tx_start),
-        .mmio_uart_status_hit(mmio_uart_status_hit)
+        .mmio_uart_status_hit(mmio_uart_status_hit),
+        .perf_dump_req(),
+        .perf_cyc(perf_cyc),
+        .perf_inst(perf_inst),
+        .perf_acc(perf_acc),
+        .perf_hit(perf_hit),
+        .perf_miss(perf_miss),
+        .ic_mode(icache_mode),
+        .mmio_perf_read_data(mmio_perf_read_data),
+        .perf_read_hit(perf_read_hit)
     );
 
     ProgramCounter program_counter (
@@ -778,7 +835,7 @@ module RV32I46F5SPMMIO #(
     // ???????????EBREAK????????
     always @(*) begin
         if (debug_mode) instruction = dbg_instruction;
-        else instruction = im_instruction;
+        else instruction = ic_cpu_data;
     end
 
     // ??????????
@@ -821,11 +878,11 @@ module RV32I46F5SPMMIO #(
     end
 
     // ????
-    // debug_pc Âèñ IF ???PC(pc), debug_instruction ????????PC??????
+    // debug_pc Â?ñ IF ???PC(pc), debug_instruction ????????PC??????
     // ??(im_instruction = data[pc[31:2]]), ???????????????????
     // ????? WB_instruction(????4?????), ????? PC ??????????????
     assign debug_pc = pc;
-    assign debug_instruction = im_instruction;
+    assign debug_instruction = ic_cpu_data;
     assign debug_reg_addr = WB_rd;
     assign debug_reg_data = register_file_write_data;
     assign debug_alu_result = WB_alu_result;

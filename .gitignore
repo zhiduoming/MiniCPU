@@ -28,6 +28,8 @@ csr_*.txt
 min_*.txt
 m_ext*.txt
 m_ext.vvp
+intdiv_*.txt
+perf_*.txt
 simrun.exe
 csr_sim
 *.zip

@@ -1,5 +1,4 @@
 +incdir+include
-rtl/top/46F5SP_MMIO_SoC_TOP.v
 rtl/top/RV32I46F_5SP_MMIO.v
 rtl/core/ALU.v
 rtl/core/ALU_Controller.v
@@ -26,10 +25,6 @@ rtl/pipeline/MEM_WB_Register.v
 rtl/memory/Data_Memory.v
 rtl/memory/Instruction_Cache.v
 rtl/memory/Instruction_Memory.v
-rtl/mmio/Button_Controller.v
-rtl/mmio/Debug_UART_Controller.v
 rtl/mmio/MMIO_Interface.v
-rtl/mmio/Unified_UART_Controller.v
 rtl/uart/UART_TX.v
 rtl/perf/PerfMon.v
-

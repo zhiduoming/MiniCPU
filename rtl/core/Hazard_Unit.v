@@ -45,6 +45,9 @@ module HazardUnit (
     // ??????????????????
     input wire manual_stall,
 
+    // ICache miss stall (freezes the whole pipeline while a line is filled)
+    input wire icache_stall,
+
     // to Forward Unit - ALU forwarding
     output reg [1:0] hazard_mem,
     output reg [1:0] hazard_wb,
@@ -234,6 +237,16 @@ module HazardUnit (
 
         // ???????????-- ??????
         if (manual_stall) begin
+            IF_ID_stall = 1'b1;
+            ID_EX_stall = 1'b1;
+            EX_MEM_stall = 1'b1;
+            MEM_WB_stall = 1'b1;
+        end
+
+        // ICache is non-stalling (ic_stall is always 0), so this block is inert.
+        // Kept for compatibility: if a stalling mode is ever enabled it freezes
+        // the whole pipeline while a line is filled.
+        if (icache_stall) begin
             IF_ID_stall = 1'b1;
             ID_EX_stall = 1'b1;
             EX_MEM_stall = 1'b1;
