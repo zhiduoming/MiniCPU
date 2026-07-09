@@ -144,9 +144,56 @@ end
 
 - 新增完整 RV32M 乘除法扩展：`MUL`、`MULH`、`MULHSU`、`MULHU`、`DIV`、`DIVU`、`REM`、`REMU`。
 - `misa` 从 `0x40000100` 更新为 `0x40001100`，声明 RV32IM。
-- `scripts/gen_program.py mem/program.hex` 的参考模型输出：`Result: PASS`，并生成 354 条指令的主自检程序。
-- Mac 本机 Icarus Verilog 回归通过：`iverilog -I include -g2012 -s tb_selfcheck -o sim.vvp -f scripts/rtl_files.f sim/tb_selfcheck.v`，随后 `vvp sim.vvp`，`sim_result.txt` 输出 `RESULT: PASS (OK)`。
-- 后续仍需在 Vivado 环境中完成综合、实现、时序和上板验证。
+- `scripts/gen_program.py mem/program.hex` 的参考模型输出：`Result: PASS`。
+- Windows/Vivado 上板验证：主自检最终通过，Tera Term 输出 `OK`。
+- 注意：当前板级顶层默认使用 10 MHz 系统时钟，以保证单周期组合 `DIV/REM` 有足够时序余量；串口仍为 115200 8N1。
+
+### 4.2 RV32M 上板调试记录（2026-07-09）
+
+**现象**：烧录后 Tera Term 曾输出：
+
+```text
+ID=12 ACT=F6002001 EXP=FFFFFFFB FAIL
+```
+
+其中 `ID=12` 是十六进制，等于十进制 18，对应主自检 Test 18（RV32M 除法/取余）。失败点是：
+
+```asm
+ADDI  x1, x0, -21
+ADDI  x2, x0, 4
+DIV   x3, x1, x2
+ADDI  x9, x0, -5
+BNE   x3, x9, fail
+```
+
+期望 `-21 / 4 = -5`，即 `0xFFFFFFFB`，但板上实际读到 `0xF6002001`。
+
+**定位**：
+
+- 仿真和 Python 参考模型均通过，说明测试程序和功能模型本身正确。
+- 失败只出现在 FPGA 上板运行。
+- Vivado timing report 曾显示 `There are no user specified timing constraints.`，说明此前工程缺少明确时钟约束。
+- `ALU.v` 中 `DIV/REM` 使用单周期组合 `/` 和 `%`，在较高板级系统时钟下容易成为长组合路径。
+
+**修复 / 规避**：
+
+- 在 `constraints/minisys_fight_constraint.xdc` 中加入输入 100 MHz 时钟和板级 `clk_sys` 派生时钟约束。
+- 将 `rtl/top/46F5SP_MMIO_SoC_TOP.v` 的板级系统时钟降为 10 MHz，用于课程验收和功能演示。
+- 将 `rtl/uart/UART_TX.v` 的波特率分频改为参数化，系统时钟改变后串口助手仍配置为 115200 8N1。
+
+**证据**：
+
+- 重新综合、实现、生成 bitstream 并烧录后，Tera Term 最新输出为：
+
+```text
+OK
+```
+
+说明主自检完整通过，包括基础 RV32I、访存、分支跳转、CSR、RV32M 乘法和 RV32M 除法/取余。
+
+**后续改进建议**：
+
+- 当前 10 MHz 是低风险上板验证方案。若后续需要提高频率，应将 `DIV/REM` 改为多周期除法单元，并给流水线增加 stall/ready 控制，而不是继续依赖单周期组合除法。
 
 ---
 
