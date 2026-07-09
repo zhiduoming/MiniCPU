@@ -1,5 +1,7 @@
 set_property IOSTANDARD LVCMOS33 [get_ports clk]
 set_property PACKAGE_PIN Y18 [get_ports clk]
+create_clock -name clk_100mhz -period 10.000 [get_ports clk]
+create_generated_clock -name clk_sys -source [get_ports clk] -divide_by 10 [get_pins clk_sys_bufg/O]
 
 set_property IOSTANDARD LVCMOS33 [get_ports reset_n]
 set_property PACKAGE_PIN P20 [get_ports reset_n]

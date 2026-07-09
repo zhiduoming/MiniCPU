@@ -1,4 +1,7 @@
-module UARTTX (
+module UARTTX #(
+    parameter integer CLK_FREQ_HZ = 10_000_000,
+    parameter integer BAUD_RATE = 115200
+)(
     input clk,
     input reset,
     input tx_start,         // Transmit start signal
@@ -8,8 +11,7 @@ module UARTTX (
     output reg tx_busy      // Transmitting flag
 );
 
-    // 115200 baud @ 50MHz = 434 clk
-    localparam BAUD_DIV = 434;
+    localparam integer BAUD_DIV = CLK_FREQ_HZ / BAUD_RATE;
     localparam BITS = 10; // start + 8 data + stop
 
     reg [15:0] baud_counter;

@@ -14,7 +14,9 @@
 // ============================================================
 
 module RV32I46F5SPMMIOSoCTOP #(
-    parameter XLEN = 32
+    parameter XLEN = 32,
+    parameter integer INPUT_CLK_HZ = 100_000_000,
+    parameter integer SYS_CLK_HZ = 10_000_000
 )(
     input  clk,                      // 100MHz ????
     input  reset_n,                  // ???? (S6????)
@@ -46,23 +48,32 @@ module RV32I46F5SPMMIOSoCTOP #(
     end
     wire internal_reset = reset_sync[2];   // ??????????
 
-    // ---------- 50MHz ??????? internal_reset ??? ----------
-    reg clk_50mhz_unbuffered;
+    localparam integer SYS_HALF_DIV = INPUT_CLK_HZ / (2 * SYS_CLK_HZ);
+    localparam integer AUTO_PULSE_CYCLES = (SYS_CLK_HZ * 67) / 100;
+
+    // ---------- Slow system clock for timing-friendly FPGA bring-up ----------
+    reg [31:0] clk_sys_div_count;
+    reg clk_sys_unbuffered;
     always @(posedge clk or posedge internal_reset) begin
-        if (internal_reset)
-            clk_50mhz_unbuffered <= 1'b0;
-        else
-            clk_50mhz_unbuffered <= ~clk_50mhz_unbuffered;
+        if (internal_reset) begin
+            clk_sys_div_count <= 32'd0;
+            clk_sys_unbuffered <= 1'b0;
+        end else if (clk_sys_div_count == SYS_HALF_DIV - 1) begin
+            clk_sys_div_count <= 32'd0;
+            clk_sys_unbuffered <= ~clk_sys_unbuffered;
+        end else begin
+            clk_sys_div_count <= clk_sys_div_count + 1'b1;
+        end
     end
-    wire clk_50mhz;
-    BUFG clk_50mhz_bufg (
-        .I(clk_50mhz_unbuffered),
-        .O(clk_50mhz)
+    wire clk_sys;
+    BUFG clk_sys_bufg (
+        .I(clk_sys_unbuffered),
+        .O(clk_sys)
     );
 
     // ---------- SW9 ??????????????????? ----------
     reg sw9_sync, sw9_prev;
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset) begin
             sw9_sync <= 1'b0;
             sw9_prev <= 1'b0;
@@ -77,7 +88,7 @@ module RV32I46F5SPMMIOSoCTOP #(
     reg btn_down_sync, btn_left_sync, btn_right_sync;
     reg btn_down_prev, btn_left_prev, btn_right_prev;
 
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset) begin
             btn_down_sync  <= 1'b0;
             btn_left_sync  <= 1'b0;
@@ -89,7 +100,7 @@ module RV32I46F5SPMMIOSoCTOP #(
         end
     end
 
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset) begin
             btn_down_prev  <= 1'b0;
             btn_left_prev  <= 1'b0;
@@ -108,13 +119,13 @@ module RV32I46F5SPMMIOSoCTOP #(
     // ---------- ?????0.67s? ----------
     reg [25:0] auto_cnt;
     wire auto_pulse;
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset)
             auto_cnt <= 0;
         else
-            auto_cnt <= (auto_cnt >= 26'd33500000) ? 26'd0 : auto_cnt + 1'b1;
+            auto_cnt <= (auto_cnt >= AUTO_PULSE_CYCLES) ? 26'd0 : auto_cnt + 1'b1;
     end
-    assign auto_pulse = (auto_cnt == 26'd33500000 - 1);   // ?0.67s????
+    assign auto_pulse = (auto_cnt == AUTO_PULSE_CYCLES - 1);   // ?0.67s????
 
     // ---------- ????????????? ----------
     reg step_pulse_reg;
@@ -122,7 +133,7 @@ module RV32I46F5SPMMIOSoCTOP #(
     reg reg_trigger_reg;
     reg alu_trigger_reg;
 
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset) begin
             step_pulse_reg      <= 1'b0;
             pc_inst_trigger_reg <= 1'b0;
@@ -158,7 +169,7 @@ module RV32I46F5SPMMIOSoCTOP #(
     // ?????? sw_run=0 ???????????????
     reg manual_stall_reg;
     reg step_pulse_prev;
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset) begin
             manual_stall_reg <= 1'b1;
             step_pulse_prev  <= 1'b0;
@@ -198,7 +209,7 @@ module RV32I46F5SPMMIOSoCTOP #(
 
     // ---------- DebugUARTController ----------
     DebugUARTController debug_uart (
-        .clk(clk_50mhz),
+        .clk(clk_sys),
         .reset(internal_reset),
         .pc_inst_trigger(pc_inst_trigger),
         .reg_trigger(reg_trigger),
@@ -217,8 +228,11 @@ module RV32I46F5SPMMIOSoCTOP #(
     assign uart_tx_start = mmio_uart_tx_start | debug_tx_start;
     assign uart_tx_data  = mmio_uart_tx_start ? mmio_uart_tx_data : debug_tx_data;
 
-    UARTTX uart_tx (
-        .clk(clk_50mhz),
+    UARTTX #(
+        .CLK_FREQ_HZ(SYS_CLK_HZ),
+        .BAUD_RATE(115200)
+    ) uart_tx (
+        .clk(clk_sys),
         .reset(internal_reset),
         .tx_start(uart_tx_start),
         .tx_data(uart_tx_data),
@@ -229,7 +243,7 @@ module RV32I46F5SPMMIOSoCTOP #(
     // ---------- UnifiedUARTController ----------
     wire benchmark_start;
     UnifiedUARTController unified_uart_controller (
-        .clk(clk_50mhz),
+        .clk(clk_sys),
         .reset(internal_reset),
         .btn_up(1'b0),    // S1 ????
         .mmio_tx_data(mmio_uart_tx_data),
@@ -241,7 +255,7 @@ module RV32I46F5SPMMIOSoCTOP #(
 
     // ---------- CPU ? ----------
     RV32I46F5SPMMIO #(.XLEN(XLEN)) rv32i46f_5sp_mmio (
-        .clk(clk_50mhz),
+        .clk(clk_sys),
         .reset(internal_reset),
         .UART_busy(uart_tx_busy),
         .manual_stall(manual_stall),
@@ -276,13 +290,13 @@ module RV32I46F5SPMMIOSoCTOP #(
     assign yled[5] = sw_run;                   // ??????
 
     // ?????0.67Hz ???
-    reg [25:0] heartbeat_cnt;
-    always @(posedge clk_50mhz or posedge internal_reset) begin
+    reg [31:0] heartbeat_cnt;
+    always @(posedge clk_sys or posedge internal_reset) begin
         if (internal_reset)
             heartbeat_cnt <= 26'd0;
         else
             heartbeat_cnt <= heartbeat_cnt + 1'b1;
     end
-    assign gled = {8{heartbeat_cnt[25]}};
+    assign gled = {8{heartbeat_cnt[22]}};
 
 endmodule
