@@ -42,6 +42,7 @@ set_property top RV32I46F5SPMMIOSoCTOP [current_fileset]
 
 add_files -fileset sim_1 -norecurse [list \
     [file join $repo_root sim/tb_selfcheck.v] \
+    [file join $repo_root sim/tb_m_ext.v] \
     [file join $repo_root sim/tb_csr.v] \
     [file join $repo_root sim/tb_cpu_smoke.v] \
     [file join $repo_root sim/tb_min.v] \
@@ -55,6 +56,7 @@ set_property used_in_implementation true [get_files $xdc_file]
 
 set mem_files [list \
     [file join $repo_root mem/program.hex] \
+    [file join $repo_root mem/m_ext_test.hex] \
     [file join $repo_root mem/csr_test.hex] \
     [file join $repo_root mem/smoke.hex] \
     [file join $repo_root mem/rom_init.mem] \

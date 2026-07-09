@@ -39,6 +39,7 @@
 | FPGA 板级顶层 | `rtl/top/46F5SP_MMIO_SoC_TOP.v` | `RV32I46F5SPMMIOSoCTOP` |
 | CPU 系统顶层 | `rtl/top/RV32I46F_5SP_MMIO.v` | `RV32I46F5SPMMIO` |
 | 主自检 testbench | `sim/tb_selfcheck.v` | `tb_selfcheck` |
+| RV32M 专项 testbench | `sim/tb_m_ext.v` | `tb_m_ext` |
 | CSR 专项 testbench | `sim/tb_csr.v` | `tb_csr` |
 | JAL 冒烟测试 testbench | `sim/tb_cpu_smoke.v` | `tb_cpu_smoke` |
 | 默认 ROM 初始化 | `mem/program.hex` | - |
@@ -83,13 +84,19 @@ scripts/sim_files.f
 scripts\run_selfcheck.bat
 ```
 
+若只想单独测试 RV32M 乘除法扩展，可运行：
+
+```powershell
+scripts\run_m_ext_test.bat
+```
+
 指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 
 ```text
 program.hex
 ```
 
-该文件在仓库中的位置是 `mem/program.hex`，用于主自检。当前主自检程序包含原 RV32I/CSR 测试以及 RV32M 乘除法扩展测试。另有 `mem/csr_test.hex` 用于 CSR RAW 专项测试，`mem/smoke.hex` 用于 JAL 冒烟测试。Vivado 工程会把这些 memory 初始化文件加入项目；命令行仿真时 testbench 会通过 `ROM_INIT_FILE` 参数选择对应文件。
+该文件在仓库中的位置是 `mem/program.hex`，用于主自检。当前主自检程序包含原 RV32I/CSR 测试以及 RV32M 乘除法扩展测试。另有 `mem/m_ext_test.hex` 用于 RV32M 乘除法专项测试，`mem/csr_test.hex` 用于 CSR RAW 专项测试，`mem/smoke.hex` 用于 JAL 冒烟测试。Vivado 工程会把这些 memory 初始化文件加入项目；命令行仿真时 testbench 会通过 `ROM_INIT_FILE` 参数选择对应文件。
 
 ## 课设文档
 

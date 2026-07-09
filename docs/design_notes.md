@@ -41,6 +41,11 @@ The RV32M extension is implemented as an EX-stage combinational ALU extension. I
 
 The CSR `misa` value is updated to `0x40001100`, declaring RV32IM support (`I` and `M` bits set).
 
+Focused verification files:
+
+- `scripts/gen_m_ext_test.py`: generates `mem/m_ext_test.hex`.
+- `sim/tb_m_ext.v`: runs only the RV32M multiply/divide focused ROM and reports `M_EXT_RESULT`.
+
 ## Verification Checklist
 
 - [ ] Basic arithmetic and logic instructions

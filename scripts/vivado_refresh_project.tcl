@@ -3,6 +3,7 @@ set repo_root [file normalize [file join $script_dir ".."]]
 
 set xdc_file [file join $repo_root constraints/minisys_fight_constraint.xdc]
 set program_file [file join $repo_root mem/program.hex]
+set m_ext_test_file [file join $repo_root mem/m_ext_test.hex]
 set csr_test_file [file join $repo_root mem/csr_test.hex]
 set smoke_file [file join $repo_root mem/smoke.hex]
 set rom_file [file join $repo_root mem/rom_init.mem]
@@ -22,7 +23,7 @@ if {[llength [get_files -quiet $xdc_file]] == 0} {
 set_property used_in_synthesis true [get_files $xdc_file]
 set_property used_in_implementation true [get_files $xdc_file]
 
-foreach mem_file [list $program_file $csr_test_file $smoke_file $rom_file $ram_file] {
+foreach mem_file [list $program_file $m_ext_test_file $csr_test_file $smoke_file $rom_file $ram_file] {
     if {[llength [get_files -quiet $mem_file]] == 0} {
         add_files -norecurse $mem_file
     }
@@ -34,6 +35,7 @@ set_property top RV32I46F5SPMMIOSoCTOP [current_fileset]
 if {[llength [get_filesets -quiet sim_1]] != 0} {
     foreach sim_file [list \
         [file join $repo_root sim/tb_selfcheck.v] \
+        [file join $repo_root sim/tb_m_ext.v] \
         [file join $repo_root sim/tb_csr.v] \
         [file join $repo_root sim/tb_cpu_smoke.v] \
         [file join $repo_root sim/tb_min.v] \
@@ -50,3 +52,4 @@ update_compile_order -fileset sources_1
 puts "MiniCPU Vivado project refreshed."
 puts "XDC: $xdc_file"
 puts "Program ROM: $program_file"
+puts "RV32M focused ROM: $m_ext_test_file"

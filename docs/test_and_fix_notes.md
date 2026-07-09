@@ -38,6 +38,7 @@ vvp sim.vvp
 | Testbench | 程序源 | 作用 |
 |-----------|--------|------|
 | `tb_selfcheck.v` | `program.hex`（`gen_program.py` 生成） | **主自检**：18 项 ISA+CSR+RV32M 乘除法测试，UART 输出 `OK` 即全过 |
+| `tb_m_ext.v` | `m_ext_test.hex`（`gen_m_ext_test.py` 生成） | **RV32M 专项测试**：只覆盖 MUL/MULH/MULHSU/MULHU/DIV/DIVU/REM/REMU 与关键边界 |
 | `tb_csr.v` | `csr_test.hex`（`gen_csr_test.py` 生成） | **聚焦 CSR 写后读（RAW）**：线性无分支程序，专测 CSRRW→CSRRS 回读是否为写后值（Test 16b 场景） |
 | `tb_cpu_smoke.v` | `smoke.hex` | JAL/跳转冒烟测试 |
 | `tb_min.v` | —（空跑） | 最小可达性测试（`MIN_DISPLAY reached`） |
