@@ -214,6 +214,7 @@ module RV32I46F5SPMMIOSoCTOP #(
     );
 
     // ---------- UART TX MUX ----------
+    // Priority: MMIO (program) > debug
     assign uart_tx_start = mmio_uart_tx_start | debug_tx_start;
     assign uart_tx_data  = mmio_uart_tx_start ? mmio_uart_tx_data : debug_tx_data;
 
@@ -245,6 +246,7 @@ module RV32I46F5SPMMIOSoCTOP #(
         .reset(internal_reset),
         .UART_busy(uart_tx_busy),
         .manual_stall(manual_stall),
+        .icache_mode(switch[18]),          // SW18: 0=direct, 1=4-way
         .retire_instruction(retire_instruction),
         .mmio_uart_tx_data(mmio_uart_tx_data),
         .mmio_uart_tx_start(mmio_uart_tx_start),

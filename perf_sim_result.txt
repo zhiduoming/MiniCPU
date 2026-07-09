@@ -1,0 +1,5 @@
+Captured UART output (first 600 bytes):
+OK
+
+
+RETIRED_TOTAL=101752 CYC_SIM=102795
