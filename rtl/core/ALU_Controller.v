@@ -100,6 +100,10 @@ module ALUController (
 						`RTYPE_SLL:    alu_op = `ALU_OP_MULH;
 						`RTYPE_SLT:    alu_op = `ALU_OP_MULHSU;
 						`RTYPE_SLTU:   alu_op = `ALU_OP_MULHU;
+						`RTYPE_XOR:    alu_op = `ALU_OP_DIV;
+						`RTYPE_SR:     alu_op = `ALU_OP_DIVU;
+						`RTYPE_OR:     alu_op = `ALU_OP_REM;
+						`RTYPE_AND:    alu_op = `ALU_OP_REMU;
 						default:        alu_op = `ALU_OP_NOP;
 					endcase
 				end else begin

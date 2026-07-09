@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Generate program.hex: a self-test RISC-V program for the RV32IM CPU.
-# Tests arithmetic, memory, CSR, and multiply extension instructions; prints
+# Tests arithmetic, memory, CSR, and multiply/divide extension instructions; prints
 # "OK\r\n" on success, "FAIL\r\n" on any mismatch.
 import sys
 
@@ -285,7 +285,7 @@ loop_top:
     SUB    x17, x16, x15
     SLTI   x9, x17, 1
     BNE    x9, x0, fail
-    # ---- Test 17: RV32M multiply subset ----
+    # ---- Test 17: RV32M multiply instructions ----
     ADDI  x26, x0, 17
     ADDI  x1, x0, 7
     ADDI  x2, x0, 6
@@ -305,6 +305,46 @@ loop_top:
     MULHU x3, x1, x2           # high32(0xFFFFFFFF * 2) = 1
     ADDI  x9, x0, 1
     BNE   x3, x9, fail
+    # ---- Test 18: RV32M divide/remainder instructions ----
+    ADDI  x26, x0, 18
+    ADDI  x1, x0, -21
+    ADDI  x2, x0, 4
+    DIV   x3, x1, x2           # signed -21 / 4 truncates toward zero -> -5
+    ADDI  x9, x0, -5
+    BNE   x3, x9, fail
+    REM   x3, x1, x2           # signed -21 % 4 -> -1
+    ADDI  x9, x0, -1
+    BNE   x3, x9, fail
+    ADDI  x1, x0, -1           # unsigned 0xFFFFFFFF
+    ADDI  x2, x0, 2
+    DIVU  x3, x1, x2           # 0xFFFFFFFF / 2 = 0x7FFFFFFF
+    LUI   x9, 0x80000
+    ADDI  x9, x9, -1
+    BNE   x3, x9, fail
+    REMU  x3, x1, x2           # 0xFFFFFFFF % 2 = 1
+    ADDI  x9, x0, 1
+    BNE   x3, x9, fail
+    ADDI  x1, x0, 123
+    ADDI  x2, x0, 0
+    DIV   x3, x1, x2           # divide by zero -> -1
+    ADDI  x9, x0, -1
+    BNE   x3, x9, fail
+    REM   x3, x1, x2           # remainder by zero -> dividend
+    ADDI  x9, x0, 123
+    BNE   x3, x9, fail
+    DIVU  x3, x1, x2           # unsigned divide by zero -> 0xFFFFFFFF
+    ADDI  x9, x0, -1
+    BNE   x3, x9, fail
+    REMU  x3, x1, x2           # unsigned remainder by zero -> dividend
+    ADDI  x9, x0, 123
+    BNE   x3, x9, fail
+    LUI   x1, 0x80000          # signed overflow case: INT_MIN / -1
+    ADDI  x2, x0, -1
+    DIV   x3, x1, x2           # quotient stays INT_MIN
+    LUI   x9, 0x80000
+    BNE   x3, x9, fail
+    REM   x3, x1, x2           # overflow remainder is 0
+    BNE   x3, x0, fail
     # ---- all passed ----
     JAL   x0, print_ok
 fail:
@@ -426,6 +466,18 @@ def encode(raw,labels):
         elif op=='MULHU':
             rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
             code.append(asm_R(3,1,rd,rs1,rs2))
+        elif op=='DIV':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(4,1,rd,rs1,rs2))
+        elif op=='DIVU':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(5,1,rd,rs1,rs2))
+        elif op=='REM':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(6,1,rd,rs1,rs2))
+        elif op=='REMU':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(7,1,rd,rs1,rs2))
         elif op=='SLTI':
             rd=reg(args[0]); rs1=reg(args[1]); imm=int(args[2],0)
             code.append(asm_I(2,rd,rs1,imm))
@@ -506,6 +558,9 @@ def simulate(code):
     def sx(v):
         v&=0xFFFFFFFF
         return v-(1<<32) if v&(1<<31) else v
+    def div_trunc_zero(a,b):
+        q=abs(a)//abs(b)
+        return -q if (a<0) ^ (b<0) else q
     ram={}
     uart=[]
     pc=0
@@ -640,6 +695,24 @@ def simulate(code):
                     regs[rd]=((a_s*b_u)&0xFFFFFFFFFFFFFFFF)>>32
                 elif funct3==3:
                     regs[rd]=((a_u*b_u)&0xFFFFFFFFFFFFFFFF)>>32
+                elif funct3==4:
+                    if b_u==0:
+                        regs[rd]=0xFFFFFFFF
+                    elif a_u==0x80000000 and b_u==0xFFFFFFFF:
+                        regs[rd]=0x80000000
+                    else:
+                        regs[rd]=div_trunc_zero(a_s,b_s)&0xFFFFFFFF
+                elif funct3==5:
+                    regs[rd]=0xFFFFFFFF if b_u==0 else (a_u//b_u)&0xFFFFFFFF
+                elif funct3==6:
+                    if b_u==0:
+                        regs[rd]=a_u
+                    elif a_u==0x80000000 and b_u==0xFFFFFFFF:
+                        regs[rd]=0
+                    else:
+                        regs[rd]=(a_s - div_trunc_zero(a_s,b_s)*b_s)&0xFFFFFFFF
+                elif funct3==7:
+                    regs[rd]=a_u if b_u==0 else (a_u%b_u)&0xFFFFFFFF
             elif funct3==0 and funct7==0: regs[rd]=(regs[rs1]+regs[rs2])&0xFFFFFFFF
             elif funct3==0 and funct7==0x20: regs[rd]=(regs[rs1]-regs[rs2])&0xFFFFFFFF
             elif funct3==1: regs[rd]=(regs[rs1]<<(regs[rs2]&0x1f))&0xFFFFFFFF

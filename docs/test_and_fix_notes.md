@@ -37,12 +37,12 @@ vvp sim.vvp
 
 | Testbench | 程序源 | 作用 |
 |-----------|--------|------|
-| `tb_selfcheck.v` | `program.hex`（`gen_program.py` 生成） | **主自检**：17 项 ISA+CSR+RV32M 乘法测试，UART 输出 `OK` 即全过 |
+| `tb_selfcheck.v` | `program.hex`（`gen_program.py` 生成） | **主自检**：18 项 ISA+CSR+RV32M 乘除法测试，UART 输出 `OK` 即全过 |
 | `tb_csr.v` | `csr_test.hex`（`gen_csr_test.py` 生成） | **聚焦 CSR 写后读（RAW）**：线性无分支程序，专测 CSRRW→CSRRS 回读是否为写后值（Test 16b 场景） |
 | `tb_cpu_smoke.v` | `smoke.hex` | JAL/跳转冒烟测试 |
 | `tb_min.v` | —（空跑） | 最小可达性测试（`MIN_DISPLAY reached`） |
 
-### 2.3 主自检 17 项（`gen_program.py` 内 `ASM`）
+### 2.3 主自检 18 项（`gen_program.py` 内 `ASM`）
 
 | # | 测试内容 | 关键指令 |
 |---|----------|----------|
@@ -62,7 +62,8 @@ vvp sim.vvp
 | 14 | SB/LB/LBU/SH/LH/LHU（字节/半字） | 全部访存变体 |
 | 15 | SRA / SRAI（算术右移，保符号） | SRA, SRAI, SRLI 对照 |
 | 16 | **CSR 指令** | 见下 |
-| 17 | **RV32M 乘法子集** | MUL, MULH, MULHSU, MULHU |
+| 17 | **RV32M 乘法指令** | MUL, MULH, MULHSU, MULHU |
+| 18 | **RV32M 除法/取余指令** | DIV, DIVU, REM, REMU |
 
 **Test 16 子项**：
 - 16a：只读 machine-info CSR（`mvendorid/marchid/mimpid/mhartid/mstatus/misa`）
@@ -76,6 +77,12 @@ vvp sim.vvp
 - `MULH`：验证有符号乘有符号的高 32 位，例如 `-2 * 3`
 - `MULHSU`：验证有符号乘无符号的高 32 位，例如 `-2 * 3`
 - `MULHU`：验证无符号乘无符号的高 32 位，例如 `0xFFFFFFFF * 2`
+
+**Test 18 子项**：
+- `DIV` / `REM`：验证有符号除法向 0 截断，例如 `-21 / 4 = -5`、`-21 % 4 = -1`
+- `DIVU` / `REMU`：验证无符号除法，例如 `0xFFFFFFFF / 2 = 0x7FFFFFFF`、余数为 `1`
+- 除数为 0：`DIV/DIVU` 返回 `0xFFFFFFFF`，`REM/REMU` 返回被除数
+- 有符号溢出：`0x80000000 / -1` 返回 `0x80000000`，余数返回 `0`
 
 > 失败信息格式：`fail:` 先打印失败测试号 `x26` 的 2 位十六进制，再打印 `FAIL\r\n`。
 
@@ -134,9 +141,9 @@ end
 
 ### 4.1 `feat/multiply` 分支状态（2026-07-09）
 
-- 新增 RV32M 乘法子集：`MUL`、`MULH`、`MULHSU`、`MULHU`。
+- 新增完整 RV32M 乘除法扩展：`MUL`、`MULH`、`MULHSU`、`MULHU`、`DIV`、`DIVU`、`REM`、`REMU`。
 - `misa` 从 `0x40000100` 更新为 `0x40001100`，声明 RV32IM。
-- `scripts/gen_program.py mem/program.hex` 的参考模型输出：`Result: PASS`，并生成 315 条指令的主自检程序。
+- `scripts/gen_program.py mem/program.hex` 的参考模型输出：`Result: PASS`，并生成 354 条指令的主自检程序。
 - Mac 本机 Icarus Verilog 回归通过：`iverilog -I include -g2012 -s tb_selfcheck -o sim.vvp -f scripts/rtl_files.f sim/tb_selfcheck.v`，随后 `vvp sim.vvp`，`sim_result.txt` 输出 `RESULT: PASS (OK)`。
 - 后续仍需在 Vivado 环境中完成综合、实现、时序和上板验证。
 

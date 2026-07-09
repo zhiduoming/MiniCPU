@@ -1,11 +1,11 @@
 # MiniCPU - RV32IM 五级流水 CPU 课设
 
-本仓库是项目式课程阶段二的 Verilog HDL 处理器设计工程，目标是在 FPGA 平台上实现一个基于 RV32I 子集并扩展 RV32M 乘法指令的五级流水 CPU，并集成存储器、MMIO、UART、板级顶层、仿真文件和约束文件。
+本仓库是项目式课程阶段二的 Verilog HDL 处理器设计工程，目标是在 FPGA 平台上实现一个基于 RV32I 子集并扩展 RV32M 乘除法指令的五级流水 CPU，并集成存储器、MMIO、UART、板级顶层、仿真文件和约束文件。
 
 当前工程重点包含：
 
 - RV32I 指令译码、控制、ALU、寄存器堆和立即数生成
-- RV32M 乘法子集：`MUL`、`MULH`、`MULHSU`、`MULHU`
+- RV32M 乘除法扩展：`MUL`、`MULH`、`MULHSU`、`MULHU`、`DIV`、`DIVU`、`REM`、`REMU`
 - IF/ID、ID/EX、EX/MEM、MEM/WB 五级流水寄存器
 - 数据前递、暂停、冲刷、分支/跳转处理
 - CSR、异常/陷入控制相关模块
@@ -89,7 +89,7 @@ scripts\run_selfcheck.bat
 program.hex
 ```
 
-该文件在仓库中的位置是 `mem/program.hex`，用于主自检。当前主自检程序包含原 RV32I/CSR 测试以及 RV32M 乘法子集测试。另有 `mem/csr_test.hex` 用于 CSR RAW 专项测试，`mem/smoke.hex` 用于 JAL 冒烟测试。Vivado 工程会把这些 memory 初始化文件加入项目；命令行仿真时 testbench 会通过 `ROM_INIT_FILE` 参数选择对应文件。
+该文件在仓库中的位置是 `mem/program.hex`，用于主自检。当前主自检程序包含原 RV32I/CSR 测试以及 RV32M 乘除法扩展测试。另有 `mem/csr_test.hex` 用于 CSR RAW 专项测试，`mem/smoke.hex` 用于 JAL 冒烟测试。Vivado 工程会把这些 memory 初始化文件加入项目；命令行仿真时 testbench 会通过 `ROM_INIT_FILE` 参数选择对应文件。
 
 ## 课设文档
 

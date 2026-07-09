@@ -16,6 +16,10 @@
 `define ALU_OP_MULH	5'b01100
 `define ALU_OP_MULHSU	5'b01101
 `define ALU_OP_MULHU	5'b01110
+`define ALU_OP_DIV	5'b01111
+`define ALU_OP_DIVU	5'b10000
+`define ALU_OP_REM	5'b10001
+`define ALU_OP_REMU	5'b10010
 `define ALU_OP_BPA	5'b11110
 `define ALU_OP_NOP  5'b11111
 
