@@ -14,7 +14,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-iverilog -I include -g2012 -s tb_selfcheck -o sim.vvp -f scripts\sim_files.f
+iverilog -I include -g2012 -s tb_selfcheck -o sim.vvp -f scripts\rtl_files.f sim\tb_selfcheck.v
 if errorlevel 1 exit /b 1
 
 vvp sim.vvp

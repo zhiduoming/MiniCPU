@@ -9,10 +9,10 @@
 module ALUController (
     input [6:0] opcode,        		// opcode
 	input [2:0] funct3,				// funct3
-    input funct7_5,					// 5th index of funct7 (starting from 0th index)
+    input [6:0] funct7,				// funct7
     input imm_10,					// 10th index of imm (starting from 0th index)
 	
-    output reg [3:0] alu_op		// ALU operation signal
+    output reg [4:0] alu_op		// ALU operation signal
 );
 
     always @(*) begin
@@ -94,45 +94,55 @@ module ALUController (
 				endcase
 			end
 			`OPCODE_RTYPE: begin
-                case (funct3)
-					`RTYPE_ADDSUB: begin // add or sub
-						if (funct7_5) begin
-							alu_op = `ALU_OP_SUB; // sub : funct7 = 0100000
+				if (funct7 == 7'b0000001) begin
+					case (funct3)
+						`RTYPE_ADDSUB: alu_op = `ALU_OP_MUL;
+						`RTYPE_SLL:    alu_op = `ALU_OP_MULH;
+						`RTYPE_SLT:    alu_op = `ALU_OP_MULHSU;
+						`RTYPE_SLTU:   alu_op = `ALU_OP_MULHU;
+						default:        alu_op = `ALU_OP_NOP;
+					endcase
+				end else begin
+	                case (funct3)
+						`RTYPE_ADDSUB: begin // add or sub
+							if (funct7[5]) begin
+								alu_op = `ALU_OP_SUB; // sub : funct7 = 0100000
+							end
+							else begin
+								alu_op = `ALU_OP_ADD; // add : funct7 = 0000000
+							end
 						end
-						else begin
-							alu_op = `ALU_OP_ADD; // add : funct7 = 0000000 
+						`RTYPE_SLL: begin
+							alu_op = `ALU_OP_SLL;
 						end
-					end
-					`RTYPE_SLL: begin 
-						alu_op = `ALU_OP_SLL;
-					end
-					`RTYPE_SLT: begin 
-						alu_op = `ALU_OP_SLT;
-					end
-					`RTYPE_SLTU: begin
-						alu_op = `ALU_OP_SLTU;
-					end
-					`RTYPE_XOR: begin
-						alu_op = `ALU_OP_XOR;
-					end
-					`RTYPE_SR: begin // srl or sra
-						if (funct7_5) begin
-							alu_op = `ALU_OP_SRA; // sra : funct7 = 0100000
+						`RTYPE_SLT: begin
+							alu_op = `ALU_OP_SLT;
 						end
-						else begin
-							alu_op = `ALU_OP_SRL; // srl : funct7 = 0000000
+						`RTYPE_SLTU: begin
+							alu_op = `ALU_OP_SLTU;
 						end
-					end
-					`RTYPE_OR: begin
-						alu_op = `ALU_OP_OR;
-					end
-					`RTYPE_AND: begin
-						alu_op = `ALU_OP_AND;
-					end
-					default: begin
-					   alu_op = `ALU_OP_NOP;
-                    end
-				endcase
+						`RTYPE_XOR: begin
+							alu_op = `ALU_OP_XOR;
+						end
+						`RTYPE_SR: begin // srl or sra
+							if (funct7[5]) begin
+								alu_op = `ALU_OP_SRA; // sra : funct7 = 0100000
+							end
+							else begin
+								alu_op = `ALU_OP_SRL; // srl : funct7 = 0000000
+							end
+						end
+						`RTYPE_OR: begin
+							alu_op = `ALU_OP_OR;
+						end
+						`RTYPE_AND: begin
+							alu_op = `ALU_OP_AND;
+						end
+						default: begin
+						   alu_op = `ALU_OP_NOP;
+	                    end
+					endcase
+				end
             end
 			`OPCODE_ENVIRONMENT: begin
 				case (funct3)

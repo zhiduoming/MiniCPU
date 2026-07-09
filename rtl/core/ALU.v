@@ -3,11 +3,17 @@
 module ALU (
     input [31:0] src_A,             // source operand A
     input [31:0] src_B,             // source operand B
-    input [3:0] alu_op,        		// ALU operation signal (from ALU Control module)
+    input [4:0] alu_op,        		// ALU operation signal (from ALU Control module)
     
     output reg [31:0] alu_result,   // ALU result
     output reg alu_zero             // zero flag
 );
+
+    wire signed [63:0] mul_ss_product = $signed({{32{src_A[31]}}, src_A}) *
+                                         $signed({{32{src_B[31]}}, src_B});
+    wire [63:0] mul_uu_product = {32'b0, src_A} * {32'b0, src_B};
+    wire signed [65:0] mul_su_product = $signed({src_A[31], src_A}) *
+                                         $signed({1'b0, src_B});
 
     always @(*) begin
         case (alu_op)
@@ -54,6 +60,22 @@ module ALU (
 			`ALU_OP_ABJ: begin
 				alu_result = src_B & (~src_A);
 			end
+
+            `ALU_OP_MUL: begin
+                alu_result = mul_uu_product[31:0];
+            end
+
+            `ALU_OP_MULH: begin
+                alu_result = mul_ss_product[63:32];
+            end
+
+            `ALU_OP_MULHSU: begin
+                alu_result = mul_su_product[63:32];
+            end
+
+            `ALU_OP_MULHU: begin
+                alu_result = mul_uu_product[63:32];
+            end
 
             `ALU_OP_BPA: begin
                 alu_result = src_A;

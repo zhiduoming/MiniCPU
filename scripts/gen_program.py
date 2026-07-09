@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Generate program.hex: a self-test RISC-V program for the RV32I CPU.
-# Tests arithmetic + memory; prints "OK\r\n" on success, "FAIL\r\n" on any mismatch.
+# Generate program.hex: a self-test RISC-V program for the RV32IM CPU.
+# Tests arithmetic, memory, CSR, and multiply extension instructions; prints
+# "OK\r\n" on success, "FAIL\r\n" on any mismatch.
 import sys
 
 OPC_R=0x33; OPC_I=0x13; OPC_L=0x03; OPC_S=0x23; OPC_B=0x63; OPC_LUI=0x37; OPC_JAL=0x6F; OPC_JALR=0x67; OPC_SYS=0x73
@@ -207,8 +208,8 @@ loop_top:
     LUI    x9, 0x00002
     ADDI   x9, x9, -2048      # 0x2000 - 0x800 = 0x1800
     BNE    x15, x9, fail
-    CSRRS  x15, 0x301, x0     # misa = 0x40000100
-    LUI    x9, 0x40000
+    CSRRS  x15, 0x301, x0     # misa = 0x40001100 (RV32IM)
+    LUI    x9, 0x40001
     ADDI   x9, x9, 0x100
     BNE    x15, x9, fail
     # 16b. writable CSR: mtvec default then write / read-back
@@ -284,6 +285,26 @@ loop_top:
     SUB    x17, x16, x15
     SLTI   x9, x17, 1
     BNE    x9, x0, fail
+    # ---- Test 17: RV32M multiply subset ----
+    ADDI  x26, x0, 17
+    ADDI  x1, x0, 7
+    ADDI  x2, x0, 6
+    MUL   x3, x1, x2           # low32(7 * 6) = 42
+    ADDI  x9, x0, 42
+    BNE   x3, x9, fail
+    ADDI  x1, x0, -2
+    ADDI  x2, x0, 3
+    MULH  x3, x1, x2           # high32(signed -2 * signed 3) = 0xFFFFFFFF
+    ADDI  x9, x0, -1
+    BNE   x3, x9, fail
+    MULHSU x3, x1, x2          # high32(signed -2 * unsigned 3) = 0xFFFFFFFF
+    ADDI  x9, x0, -1
+    BNE   x3, x9, fail
+    ADDI  x1, x0, -1           # unsigned 0xFFFFFFFF
+    ADDI  x2, x0, 2
+    MULHU x3, x1, x2           # high32(0xFFFFFFFF * 2) = 1
+    ADDI  x9, x0, 1
+    BNE   x3, x9, fail
     # ---- all passed ----
     JAL   x0, print_ok
 fail:
@@ -393,6 +414,18 @@ def encode(raw,labels):
         elif op=='SRA':
             rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
             code.append(asm_R(5,0x20,rd,rs1,rs2))
+        elif op=='MUL':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(0,1,rd,rs1,rs2))
+        elif op=='MULH':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(1,1,rd,rs1,rs2))
+        elif op=='MULHSU':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(2,1,rd,rs1,rs2))
+        elif op=='MULHU':
+            rd=reg(args[0]); rs1=reg(args[1]); rs2=reg(args[2])
+            code.append(asm_R(3,1,rd,rs1,rs2))
         elif op=='SLTI':
             rd=reg(args[0]); rs1=reg(args[1]); imm=int(args[2],0)
             code.append(asm_I(2,rd,rs1,imm))
@@ -481,7 +514,7 @@ def simulate(code):
     # ---- CSR file model (mirrors CSR_File.v) ----
     csr_state={
         0xF11:0x52564B43, 0xF12:0x34365335, 0xF13:0x34364931, 0xF14:0x524B4330,
-        0x300:0x00001800, 0x301:0x40000100,
+        0x300:0x00001800, 0x301:0x40001100,
         0x305:0x00001000, 0x341:0, 0x342:0,
         0xB00:0, 0xB02:0, 0xB80:0, 0xB82:0,   # mcycle / minstret (low & high)
     }
@@ -596,7 +629,18 @@ def simulate(code):
                 if rd!=0:
                     regs[rd]=old & 0xFFFFFFFF
         elif opcode==OPC_R:
-            if funct3==0 and funct7==0: regs[rd]=(regs[rs1]+regs[rs2])&0xFFFFFFFF
+            if funct7==1:
+                a_s=sx(regs[rs1]); b_s=sx(regs[rs2])
+                a_u=regs[rs1]&0xFFFFFFFF; b_u=regs[rs2]&0xFFFFFFFF
+                if funct3==0:
+                    regs[rd]=(a_u*b_u)&0xFFFFFFFF
+                elif funct3==1:
+                    regs[rd]=((a_s*b_s)&0xFFFFFFFFFFFFFFFF)>>32
+                elif funct3==2:
+                    regs[rd]=((a_s*b_u)&0xFFFFFFFFFFFFFFFF)>>32
+                elif funct3==3:
+                    regs[rd]=((a_u*b_u)&0xFFFFFFFFFFFFFFFF)>>32
+            elif funct3==0 and funct7==0: regs[rd]=(regs[rs1]+regs[rs2])&0xFFFFFFFF
             elif funct3==0 and funct7==0x20: regs[rd]=(regs[rs1]-regs[rs2])&0xFFFFFFFF
             elif funct3==1: regs[rd]=(regs[rs1]<<(regs[rs2]&0x1f))&0xFFFFFFFF
             elif funct3==2: regs[rd]=1 if sx(regs[rs1])<sx(regs[rs2]) else 0

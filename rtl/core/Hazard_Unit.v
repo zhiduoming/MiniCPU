@@ -76,15 +76,15 @@ module HazardUnit (
     // Store instruction detection
     wire is_store = (EX_opcode == `OPCODE_STORE);
 
-    // Store instruction rs2 hazard detections
-    assign store_hazard_mem = is_store && mem_hazard_rs2;
-    assign store_hazard_wb = is_store && wb_hazard_rs2 && !mem_hazard_rs2;
-
     // Register ALU hazard detections
     wire mem_hazard_rs1 = MEM_register_write_enable && (MEM_rd != 5'd0) && (MEM_rd == EX_rs1);
     wire mem_hazard_rs2 = MEM_register_write_enable && (MEM_rd != 5'd0) && (MEM_rd == EX_rs2);
     wire wb_hazard_rs1 = WB_register_write_enable && (WB_rd != 5'd0) && (WB_rd == EX_rs1);
     wire wb_hazard_rs2 = WB_register_write_enable && (WB_rd != 5'd0) && (WB_rd == EX_rs2);
+
+    // Store instruction rs2 hazard detections
+    assign store_hazard_mem = is_store && mem_hazard_rs2;
+    assign store_hazard_wb = is_store && wb_hazard_rs2 && !mem_hazard_rs2;
     
     // CSR hazard detection
     assign csr_hazard_mem = MEM_csr_write_enable && (MEM_csr_write_address == EX_imm);

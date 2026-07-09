@@ -85,7 +85,7 @@ module RV32I46F5SPMMIO #(
     wire [XLEN-1:0] read_data2;
 
     // ALU Controller
-    wire [3:0] alu_op;
+    wire [4:0] alu_op;
 
     // ALUsrcA, srcB MUX
     reg [XLEN-1:0] src_A;
@@ -260,7 +260,7 @@ module RV32I46F5SPMMIO #(
     ALUController alu_controller (
         .opcode(EX_opcode),
         .funct3(EX_funct3),
-        .funct7_5(EX_funct7[5]),
+        .funct7(EX_funct7),
         .imm_10(EX_imm[10]),
         .alu_op(alu_op)
     );
