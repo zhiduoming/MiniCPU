@@ -61,10 +61,6 @@ set mem_files [list \
     [file join $repo_root mem/initial_data.mem] \
 ]
 add_files -norecurse $mem_files
-foreach mem_file $mem_files {
-    set_property used_in_synthesis true [get_files $mem_file]
-    set_property used_in_simulation true [get_files $mem_file]
-}
 
 update_compile_order -fileset sources_1
 update_compile_order -fileset sim_1

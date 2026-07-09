@@ -26,10 +26,6 @@ foreach mem_file [list $program_file $csr_test_file $smoke_file $rom_file $ram_f
     if {[llength [get_files -quiet $mem_file]] == 0} {
         add_files -norecurse $mem_file
     }
-    if {[llength [get_files -quiet $mem_file]] != 0} {
-        set_property used_in_synthesis true [get_files $mem_file]
-        set_property used_in_simulation true [get_files $mem_file]
-    }
 }
 
 set_property include_dirs [file join $repo_root include] [current_fileset]
