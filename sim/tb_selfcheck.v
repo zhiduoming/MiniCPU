@@ -49,6 +49,7 @@ module tb_selfcheck;
     integer   out_cnt;
     integer   cyc;
     integer   i;
+    integer   fail_pos;
     integer   retired_cnt;
     reg       done_flag;
     integer   dbg_fd;
@@ -111,10 +112,16 @@ module tb_selfcheck;
             $fwrite(fd, "%c", out_bytes[i]);
         $fwrite(fd, "\n");
 
-        if (out_cnt >= 6 &&
-            out_bytes[2] == "F" && out_bytes[3] == "A" &&
-            out_bytes[4] == "I" && out_bytes[5] == "L") begin
-            $fwrite(fd, "RESULT: FAIL at test id '%c%c'\n", out_bytes[0], out_bytes[1]);
+        fail_pos = -1;
+        for (i = 0; i + 3 < out_cnt; i = i + 1) begin
+            if (fail_pos < 0 &&
+                out_bytes[i] == "F" && out_bytes[i+1] == "A" &&
+                out_bytes[i+2] == "I" && out_bytes[i+3] == "L")
+                fail_pos = i;
+        end
+
+        if (fail_pos >= 0) begin
+            $fwrite(fd, "RESULT: FAIL\n");
         end else if (out_cnt >= 4 &&
             out_bytes[0] == "O" && out_bytes[1] == "K") begin
             $fwrite(fd, "RESULT: PASS (OK)\n");

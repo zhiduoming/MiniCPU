@@ -96,6 +96,8 @@ scripts\run_m_ext_test.bat
 source E:/Code/cpu/scripts/vivado_run_m_ext_sim.tcl
 ```
 
+测试程序通过 UART 输出结果：成功输出 `OK`；失败输出 `ID=xx ACT=xxxxxxxx EXP=xxxxxxxx FAIL`，其中 `ID` 是测试编号，`ACT` 是 CPU 实际算出的值，`EXP` 是测试期望值。
+
 指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 
 ```text

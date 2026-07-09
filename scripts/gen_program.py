@@ -348,13 +348,41 @@ loop_top:
     # ---- all passed ----
     JAL   x0, print_ok
 fail:
-    # print failing test id (x26) as 2 hex digits, then "FAIL"
+    # print failing test id (x26), actual value (x27), and expected value (x28)
+    PUTC 0x49                       # 'I'
+    PUTC 0x44                       # 'D'
+    PUTC 0x3D                       # '='
     SRLI  x20, x26, 4          # high nibble
     ANDI  x20, x20, 0xF
     JAL   x1, put_hex
     ANDI  x20, x26, 0xF        # low nibble
     JAL   x1, put_hex
+    PUTC 0x20
+    PUTC 0x41                       # 'A'
+    PUTC 0x43                       # 'C'
+    PUTC 0x54                       # 'T'
+    PUTC 0x3D                       # '='
+    ADD   x21, x27, x0
+    JAL   x1, put_hex32
+    PUTC 0x20
+    PUTC 0x45                       # 'E'
+    PUTC 0x58                       # 'X'
+    PUTC 0x50                       # 'P'
+    PUTC 0x3D                       # '='
+    ADD   x21, x28, x0
+    JAL   x1, put_hex32
+    PUTC 0x20
     JAL   x0, print_fail_msg
+put_hex32:
+    ADD   x29, x1, x0
+    ADDI  x22, x0, 8
+ph32_loop:
+    SRLI  x20, x21, 28
+    JAL   x1, put_hex
+    SLLI  x21, x21, 4
+    ADDI  x22, x22, -1
+    BNE   x22, x0, ph32_loop
+    JALR  x0, 0(x29)
 put_hex:
     ADDI  x9, x0, 10
     BLT   x20, x9, ph_num
@@ -393,6 +421,7 @@ sub_routine:
 def parse():
     raw=[]; labels={}
     plc=0
+    fail_ctx=0
     for ln in ASM.strip().splitlines():
         ln=ln.split('#')[0].strip()
         if not ln: continue
@@ -410,6 +439,17 @@ def parse():
             raw.append(('ANDI',['x31','x31','1'])); plc+=1
             raw.append(('BNE',['x31','x0',lbl])); plc+=1
             raw.append(('SW',['x20','0(x30)'])); plc+=1
+        elif op=='BNE' and len(parts)==4 and parts[3]=='fail':
+            fail_ctx+=1
+            fail_lbl='.failctx%d'%fail_ctx
+            after_lbl='.after_failctx%d'%fail_ctx
+            raw.append(('BNE',[parts[1],parts[2],fail_lbl])); plc+=1
+            raw.append(('JAL',['x0',after_lbl])); plc+=1
+            labels[fail_lbl]=plc*4
+            raw.append(('ADD',['x27',parts[1],'x0'])); plc+=1
+            raw.append(('ADD',['x28',parts[2],'x0'])); plc+=1
+            raw.append(('JAL',['x0','fail'])); plc+=1
+            labels[after_lbl]=plc*4
         else:
             raw.append((op,parts[1:])); plc+=1
     return raw,labels
