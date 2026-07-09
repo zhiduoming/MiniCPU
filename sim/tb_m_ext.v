@@ -1,5 +1,9 @@
 `timescale 1ns / 1ps
 
+`ifndef M_EXT_ROM_FILE
+`define M_EXT_ROM_FILE "mem/m_ext_test.hex"
+`endif
+
 module tb_m_ext;
     reg clk;
     reg reset;
@@ -18,7 +22,7 @@ module tb_m_ext;
     wire [31:0] debug_alu_result;
 
     RV32I46F5SPMMIO #(
-        .ROM_INIT_FILE("mem/m_ext_test.hex")
+        .ROM_INIT_FILE(`M_EXT_ROM_FILE)
     ) dut (
         .clk(clk),
         .reset(reset),
@@ -100,4 +104,3 @@ module tb_m_ext;
         $finish;
     end
 endmodule
-

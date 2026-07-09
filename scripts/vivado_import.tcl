@@ -47,6 +47,7 @@ add_files -fileset sim_1 -norecurse [list \
     [file join $repo_root sim/tb_cpu_smoke.v] \
     [file join $repo_root sim/tb_min.v] \
 ]
+set_property verilog_define [list "M_EXT_ROM_FILE=\"[file join $repo_root mem/m_ext_test.hex]\""] [get_filesets sim_1]
 set_property top tb_selfcheck [get_filesets sim_1]
 
 set xdc_file [file join $repo_root constraints/minisys_fight_constraint.xdc]

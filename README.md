@@ -90,6 +90,12 @@ scripts\run_selfcheck.bat
 scripts\run_m_ext_test.bat
 ```
 
+在 Vivado 中可直接运行：
+
+```tcl
+source E:/Code/cpu/scripts/vivado_run_m_ext_sim.tcl
+```
+
 指令存储器 `InstructionMemory` 通过参数 `ROM_INIT_FILE` 指定初始化文件，默认文件名为：
 
 ```text

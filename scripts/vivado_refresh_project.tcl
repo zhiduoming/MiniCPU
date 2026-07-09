@@ -44,6 +44,7 @@ if {[llength [get_filesets -quiet sim_1]] != 0} {
             add_files -fileset sim_1 -norecurse $sim_file
         }
     }
+    set_property verilog_define [list "M_EXT_ROM_FILE=\"$m_ext_test_file\""] [get_filesets sim_1]
     set_property top tb_selfcheck [get_filesets sim_1]
     update_compile_order -fileset sim_1
 }
