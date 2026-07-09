@@ -26,5 +26,6 @@ rtl/memory/Data_Memory.v
 rtl/memory/Instruction_Cache.v
 rtl/memory/Instruction_Memory.v
 rtl/mmio/MMIO_Interface.v
+rtl/perf/IntDiv.v
 rtl/uart/UART_TX.v
 rtl/perf/PerfMon.v

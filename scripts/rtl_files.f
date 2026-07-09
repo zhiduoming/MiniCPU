@@ -30,6 +30,6 @@ rtl/mmio/Button_Controller.v
 rtl/mmio/Debug_UART_Controller.v
 rtl/mmio/MMIO_Interface.v
 rtl/mmio/Unified_UART_Controller.v
+rtl/perf/IntDiv.v
 rtl/uart/UART_TX.v
 rtl/perf/PerfMon.v
-

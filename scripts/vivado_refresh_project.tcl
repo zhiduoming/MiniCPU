@@ -9,6 +9,43 @@ set smoke_file [file join $repo_root mem/smoke.hex]
 set rom_file [file join $repo_root mem/rom_init.mem]
 set ram_file [file join $repo_root mem/initial_data.mem]
 
+set rtl_files [list \
+    [file join $repo_root rtl/top/46F5SP_MMIO_SoC_TOP.v] \
+    [file join $repo_root rtl/top/RV32I46F_5SP_MMIO.v] \
+    [file join $repo_root rtl/core/ALU.v] \
+    [file join $repo_root rtl/core/ALU_Controller.v] \
+    [file join $repo_root rtl/core/Branch_Logic.v] \
+    [file join $repo_root rtl/core/Branch_Predictor.v] \
+    [file join $repo_root rtl/core/Byte_Enable_Logic.v] \
+    [file join $repo_root rtl/core/Control_Unit.v] \
+    [file join $repo_root rtl/core/CSR_File.v] \
+    [file join $repo_root rtl/core/Exception_Detector.v] \
+    [file join $repo_root rtl/core/Forward_Unit.v] \
+    [file join $repo_root rtl/core/Hazard_Unit.v] \
+    [file join $repo_root rtl/core/Immediate_Generator.v] \
+    [file join $repo_root rtl/core/Instruction_Decoder.v] \
+    [file join $repo_root rtl/core/PC_Aligner.v] \
+    [file join $repo_root rtl/core/PC_Controller.v] \
+    [file join $repo_root rtl/core/PC_Plus_4.v] \
+    [file join $repo_root rtl/core/Program_Counter.v] \
+    [file join $repo_root rtl/core/Register_File.v] \
+    [file join $repo_root rtl/core/Trap_Controller.v] \
+    [file join $repo_root rtl/pipeline/IF_ID_Register.v] \
+    [file join $repo_root rtl/pipeline/ID_EX_Register.v] \
+    [file join $repo_root rtl/pipeline/EX_MEM_Register.v] \
+    [file join $repo_root rtl/pipeline/MEM_WB_Register.v] \
+    [file join $repo_root rtl/memory/Data_Memory.v] \
+    [file join $repo_root rtl/memory/Instruction_Cache.v] \
+    [file join $repo_root rtl/memory/Instruction_Memory.v] \
+    [file join $repo_root rtl/mmio/Button_Controller.v] \
+    [file join $repo_root rtl/mmio/Debug_UART_Controller.v] \
+    [file join $repo_root rtl/mmio/MMIO_Interface.v] \
+    [file join $repo_root rtl/mmio/Unified_UART_Controller.v] \
+    [file join $repo_root rtl/perf/PerfMon.v] \
+    [file join $repo_root rtl/perf/IntDiv.v] \
+    [file join $repo_root rtl/uart/UART_TX.v] \
+]
+
 if {[llength [get_filesets -quiet sources_1]] == 0} {
     error "sources_1 fileset not found. Open the Vivado project before sourcing this script."
 }
@@ -26,6 +63,12 @@ set_property used_in_implementation true [get_files $xdc_file]
 foreach mem_file [list $program_file $m_ext_test_file $csr_test_file $smoke_file $rom_file $ram_file] {
     if {[llength [get_files -quiet $mem_file]] == 0} {
         add_files -norecurse $mem_file
+    }
+}
+
+foreach rtl_file $rtl_files {
+    if {[llength [get_files -quiet $rtl_file]] == 0} {
+        add_files -norecurse $rtl_file
     }
 }
 

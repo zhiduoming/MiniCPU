@@ -33,6 +33,8 @@ set rtl_files [list \
     [file join $repo_root rtl/mmio/Debug_UART_Controller.v] \
     [file join $repo_root rtl/mmio/MMIO_Interface.v] \
     [file join $repo_root rtl/mmio/Unified_UART_Controller.v] \
+    [file join $repo_root rtl/perf/PerfMon.v] \
+    [file join $repo_root rtl/perf/IntDiv.v] \
     [file join $repo_root rtl/uart/UART_TX.v] \
 ]
 
