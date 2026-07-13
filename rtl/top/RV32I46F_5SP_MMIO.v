@@ -1,0 +1,995 @@
+`include "alu_src_select.vh"
+`include "rf_wd_select.vh"
+`include "trap.vh"
+`include "opcode.vh"
+
+
+module RV32I46F5SPMMIO #(
+    parameter XLEN = 32,
+    parameter ROM_INIT_FILE = "program.hex"
+)(
+    input clk,
+    input reset,
+    input UART_busy,
+    input manual_stall,                    // ?????????S5???
+    input icache_mode,                     // SW18: 0=direct-mapped, 1=4-way
+    input ext_irq,
+    input [4:0] game_p1_buttons,
+    input [4:0] game_p2_buttons,
+
+    output wire [31:0] retire_instruction,
+    output wire [7:0] mmio_uart_tx_data,
+    output wire mmio_uart_tx_start,
+    output wire instruction_retired,       // ?????????LED??
+    output wire trapped,                   // ????????????
+    output wire [10:0] game_p1_x,
+    output wire [10:0] game_p1_y,
+    output wire [10:0] game_p2_x,
+    output wire [10:0] game_p2_y,
+    output wire [31:0] game_status,
+    output wire [31:0] game_flags,
+    output wire [31:0] game_proj1_pos,
+    output wire [31:0] game_proj2_pos,
+    output wire [31:0] game_medicine_pos,
+    output wire [31:0] game_timer,
+
+    output [31:0] debug_pc,
+    output [31:0] debug_instruction,
+    output [4:0]  debug_reg_addr,
+    output [31:0] debug_reg_data,
+    output [31:0] debug_alu_result
+);
+
+    // MMIO Interface
+    reg [31:0] mmio_uart_tx_status;
+    wire mmio_uart_status_hit;
+    wire [XLEN-1:0] mmio_uart_status;
+
+    // Program Counter and  PC Plus 4
+    wire [XLEN-1:0] pc;
+    wire [XLEN-1:0] pc_plus_4_signal;
+    wire [XLEN-1:0] next_pc;
+    
+    // Instruction Memory / Cache and Debug Interface
+    wire [31:0] ic_cpu_data;
+    wire        ic_stall, ic_access, ic_hit, ic_miss, ic_ready;
+    wire [31:0] rom_cache_data;
+    wire        ic_mem_req;
+    wire [31:0] ic_mem_addr;
+    wire [31:0] dbg_instruction = 32'b00000001011110110000110000110011; //add x24 = x22 + x23 = FFFF_FFBC + ABAD_BB02 = ABADBABE
+    reg [31:0] instruction;
+    wire [XLEN-1:0] IF_imm;
+    wire [6:0] IF_opcode;
+
+    // ROM bypass signals (MEM stage instruction memory access)
+    wire [31:0] rom_address;
+    wire [31:0] rom_read_data;
+
+    assign IF_imm = {{20{instruction[31]}}, instruction[7], instruction[30:25], instruction[11:8], 1'b0};
+    assign IF_opcode = (instruction[6:0]);
+
+    // Instruction Decoder
+    wire [6:0] opcode;
+    wire [2:0] funct3;
+    wire [6:0] funct7;
+    wire [4:0] rs1;
+    wire [4:0] rs2;
+    wire [4:0] rs3;
+    wire [4:0] rd;
+    wire [19:0] raw_imm;
+    
+    // Immediate Generator
+    wire [XLEN-1:0] imm;
+
+    // Control Unit
+    wire pc_stall;
+    wire jump;
+    wire branch;
+    wire [1:0] alu_src_A_select;
+    wire [2:0] alu_src_B_select;
+    wire alu_src_C_select;
+    wire memory_read;
+    wire memory_write;
+    wire register_file_write;
+    wire [2:0] register_file_write_data_select;
+    wire cu_csr_write_enable;
+
+    // Branch Logic and Branch Predictor
+    wire branch_taken;
+    wire [XLEN-1:0] branch_target;
+    wire [XLEN-1:0] branch_target_actual;
+
+    // Register File
+    reg [XLEN-1:0] register_file_write_data;
+    
+    // Register File
+    wire [XLEN-1:0] read_data1;
+    wire [XLEN-1:0] read_data2;
+    wire [XLEN-1:0] read_data3;
+
+    // ALU Controller
+    wire [4:0] alu_op;
+
+    // ALUsrcA, srcB MUX
+    reg [XLEN-1:0] src_A;
+    reg [XLEN-1:0] src_B;
+    reg [XLEN-1:0] src_C;
+
+    // ALU
+    wire [XLEN-1:0] alu_result;
+    wire alu_zero;
+    
+    // Data Memory and Byte Enable Logic
+    wire [XLEN-1:0] data_memory_read_data;
+    wire [XLEN-1:0] byte_enable_logic_register_file_write_data;
+    wire [XLEN-1:0] data_memory_write_data;
+    wire [3:0] write_mask;
+
+    // CSR File
+    wire csr_write_enable;
+    reg [11:0] csr_read_address;
+    reg [11:0] csr_write_address;
+    reg [XLEN-1:0] csr_write_data;
+    wire [XLEN-1:0] csr_read_out;
+    wire csr_ready;
+    reg instruction_retired_reg;             // ???????
+
+    // Exception_Detector
+    // wire trapped;   // <--- ?????????????
+    wire [3:0]  trap_status;
+    wire [3:0]  trap_status_eff;
+    reg irq_active;
+    wire interrupt_taken;
+
+    always @(posedge clk or posedge reset) begin
+        if (reset)
+            irq_active <= 1'b0;
+        else if (interrupt_taken)
+            irq_active <= 1'b0;
+        else if (ext_irq)
+            irq_active <= 1'b1;
+    end
+    assign trap_status_eff = trap_status |
+                             (irq_active ? `TRAP_INTERRUPT : `TRAP_NONE);
+
+    // Trap Controller
+    wire trap_done;
+    wire debug_mode;
+    wire tc_csr_write_enable;
+    wire [XLEN-1:0] trap_target;
+    wire [11:0] csr_trap_address;
+    wire [XLEN-1:0] csr_trap_write_data;
+    wire pth_done_flush;
+    wire standby_mode;
+    wire misaligned_instruction_flush;
+    wire misaligned_memory_flush;
+    wire ic_clean;
+    wire tc_csr_access;
+
+    // Branch Predictor
+    wire branch_prediction_miss;
+    
+    // IF_ID_Register
+    wire [XLEN-1:0] ID_pc;
+    wire [XLEN-1:0] ID_pc_plus_4;
+    wire [31:0] ID_instruction;
+    wire ID_branch_estimation;
+
+    // ID_EX_Register
+    wire [XLEN-1:0] EX_pc;
+    wire [XLEN-1:0] EX_pc_plus_4;
+    wire EX_branch_estimation;
+    wire [31:0] EX_instruction;
+
+    // EX_MEM_Register
+    wire EX_jump;
+    wire EX_memory_read;
+    wire EX_memory_write;
+    wire [2:0] EX_register_file_write_data_select;
+    wire EX_register_write_enable;
+    wire EX_csr_write_enable;
+    wire EX_branch;
+    wire [1:0] EX_alu_src_A_select;
+    wire [2:0] EX_alu_src_B_select;
+    wire EX_alu_src_C_select;
+    wire [6:0] EX_opcode;
+    wire [2:0] EX_funct3;
+    wire [6:0] EX_funct7;
+    wire [4:0] EX_rd;
+    wire [19:0] EX_raw_imm;
+    wire [XLEN-1:0] EX_read_data1;
+    wire [XLEN-1:0] EX_read_data2;
+    wire [XLEN-1:0] EX_read_data3;
+    wire [4:0] EX_rs1;
+    wire [4:0] EX_rs2;
+    wire [4:0] EX_rs3;
+    wire [XLEN-1:0] EX_imm;
+    wire [XLEN-1:0] EX_csr_read_data;
+
+    wire [XLEN-1:0] MEM_pc;
+    wire [XLEN-1:0] MEM_pc_plus_4;
+    wire [31:0] MEM_instruction;
+
+    wire MEM_memory_read;
+    wire MEM_memory_write;
+    wire [2:0] MEM_register_file_write_data_select;
+    wire MEM_register_write_enable;
+    wire MEM_csr_write_enable;
+    wire [6:0] MEM_opcode;
+    wire [2:0] MEM_funct3;
+    wire [4:0] MEM_rs1;
+    wire [4:0] MEM_rd;
+    wire [XLEN-1:0] MEM_read_data2;
+    wire [XLEN-1:0] MEM_imm;
+    wire [19:0] MEM_raw_imm;
+    wire [XLEN-1:0] MEM_csr_read_data;
+    wire [XLEN-1:0] MEM_alu_result;
+
+    wire [XLEN-1:0] WB_pc;
+    wire [XLEN-1:0] WB_pc_plus_4;
+    wire [31:0] WB_instruction;
+    wire [6:0] WB_opcode;
+
+    // MEM_WB_Register
+    wire MEM_WB_flush;
+    wire [2:0] WB_register_file_write_data_select;
+    wire [XLEN-1:0] WB_imm;
+    wire [19:0] WB_raw_imm;
+    wire [XLEN-1:0] WB_csr_read_data;
+    wire [XLEN-1:0] WB_alu_result;
+    wire WB_register_write_enable;
+    wire WB_csr_write_enable;
+    wire [4:0] WB_rs1;
+    wire [4:0] WB_rd;
+
+    wire [XLEN-1:0] WB_byte_enable_logic_register_file_write_data;
+
+    // Hazard Unit
+    wire IF_ID_flush;
+    wire ID_EX_flush;
+    wire IF_ID_stall;
+    wire ID_EX_stall;
+    wire EX_MEM_stall;
+    wire MEM_WB_stall;
+    wire csr_hazard_mem;
+    wire csr_hazard_wb;
+    wire store_hazard_mem;
+    wire store_hazard_wb;
+
+    // Forward Unit
+    wire [2:0] hazard_mem;
+    wire [2:0] hazard_wb;
+    wire [XLEN-1:0] csr_forward_data;
+    wire [XLEN-1:0] alu_forward_source_data_a;
+    wire [XLEN-1:0] alu_forward_source_data_b;
+    wire [XLEN-1:0] alu_forward_source_data_c;
+    wire [1:0] alu_forward_source_select_a;
+    wire [1:0] alu_forward_source_select_b;
+    wire [1:0] alu_forward_source_select_c;
+    reg [XLEN-1:0] alu_normal_source_a;
+    reg [XLEN-1:0] alu_normal_source_b;
+
+    reg [XLEN-1:0] retired_alu_result;
+    reg [XLEN-1:0] retired_csr_read_data;
+
+    wire [XLEN-1:0] store_forward_data;
+    wire store_forward_enable;
+    wire [XLEN-1:0] EX_read_data2_MUX;
+    assign EX_read_data2_MUX = store_forward_enable ? store_forward_data : EX_read_data2;
+
+    // Branch Predictor
+    wire branch_estimation;
+    
+    wire [31:0] writeback_instruction = WB_instruction;
+    assign retire_instruction = writeback_instruction;
+
+    wire csr_write_enable_source;
+    assign csr_write_enable_source = tc_csr_write_enable ? tc_csr_write_enable : WB_csr_write_enable;
+
+    // PerfMon counter wires (MMIO-readable at 0x10010020+)
+    wire [31:0] perf_cyc, perf_inst, perf_acc, perf_hit, perf_miss;
+    wire [31:0] perf_stall, perf_branch, perf_branch_miss, perf_memory;
+    wire [31:0] perf_m_ext, perf_mac, perf_mul_cycles;
+    wire [31:0] mmio_perf_read_data;
+    wire        perf_read_hit;
+    wire        perf_clear_req;
+    wire [31:0] mmio_game_input_data;
+    wire        game_input_read_hit;
+
+    wire [XLEN-1:0] data_memory_read_data_muxed;
+    assign data_memory_read_data_muxed =
+        game_input_read_hit ? mmio_game_input_data :
+        perf_read_hit       ? mmio_perf_read_data :
+        mmio_uart_status_hit ? mmio_uart_status :
+        data_memory_read_data;
+
+    // ------------------------------------------------------------
+    // ??????
+    // ------------------------------------------------------------
+
+    ALU alu (
+        .src_A(src_A),
+        .src_B(src_B),
+        .src_C(src_C),
+        .alu_op(alu_op),
+        .alu_result(alu_result),
+        .alu_zero(alu_zero)
+    );
+
+    ALUController alu_controller (
+        .opcode(EX_opcode),
+        .funct3(EX_funct3),
+        .funct7(EX_funct7),
+        .imm_10(EX_imm[10]),
+        .alu_op(alu_op)
+    );
+
+    BranchLogic branch_logic (
+        .branch(EX_branch),
+        .branch_estimation(EX_branch_estimation),
+        .funct3(EX_funct3),
+        .alu_zero(alu_zero),
+        .pc(EX_pc),
+        .imm(EX_imm),
+        .branch_taken(branch_taken),
+        .branch_prediction_miss(branch_prediction_miss),
+        .branch_target_actual(branch_target_actual)
+    );
+
+    BranchPredictor #(.XLEN(XLEN)) branch_predictor(
+        .clk(clk),
+        .reset(reset),
+        .IF_opcode(IF_opcode),
+        .IF_pc (pc),
+        .IF_imm (IF_imm),
+        .EX_branch(EX_branch),
+        .EX_branch_taken (branch_taken),
+        .branch_estimation (branch_estimation),
+        .branch_target (branch_target)
+    );
+
+    ByteEnableLogic byte_enable_logic (
+        .memory_read(MEM_memory_read),
+        .memory_write(MEM_memory_write),
+        .funct3(MEM_funct3),
+        .register_file_read_data(MEM_read_data2),
+        .data_memory_read_data(data_memory_read_data_muxed),
+        .address(MEM_alu_result[1:0]),
+        .register_file_write_data(byte_enable_logic_register_file_write_data),
+        .data_memory_write_data(data_memory_write_data),
+        .write_mask(write_mask)
+    );
+
+    ControlUnit control_unit (
+        .write_done(1'b1),
+        .opcode(opcode),
+        .funct3(funct3),
+        .funct7(funct7),
+        .trap_done(trap_done),
+        .csr_ready(csr_ready),
+        .IF_ID_stall(IF_ID_stall),
+        .rs1(rs1),
+        .pc_stall(pc_stall),
+        .jump(jump),
+        .branch(branch),
+        .alu_src_A_select(alu_src_A_select),
+        .alu_src_B_select(alu_src_B_select),
+        .alu_src_C_select(alu_src_C_select),
+        .register_file_write(register_file_write),
+        .register_file_write_data_select(register_file_write_data_select),
+        .memory_read(memory_read),
+        .memory_write(memory_write),
+        .csr_write_enable(cu_csr_write_enable)
+    );
+
+    CSRFile #(.XLEN(XLEN)) csr_file (
+        .clk(clk),
+        .reset(reset),
+        .trapped(trapped),
+        .csr_write_enable(csr_write_enable_source),
+        .csr_read_address(csr_read_address),
+        .csr_write_address(csr_write_address),
+        .csr_write_data(csr_write_data),
+        .instruction_retired(instruction_retired_reg),
+        .csr_read_out(csr_read_out),
+        .csr_ready(csr_ready) 
+    );
+
+    DataMemory data_memory (
+        .clk(clk),
+        .write_enable(MEM_memory_write && !mmio_uart_status_hit && !perf_read_hit),
+        .address(MEM_alu_result),
+        .write_data(data_memory_write_data),
+        .write_mask(write_mask),
+        .rom_read_data(rom_read_data),
+        .rom_address(rom_address),
+        .read_data(data_memory_read_data)
+    );
+
+    ExceptionDetector exception_detector (
+        .clk(clk),
+        .reset(reset),
+        .ID_opcode(opcode),
+        .ID_funct3(funct3),
+        .EX_opcode(EX_opcode),
+        .EX_funct3(EX_funct3),
+        .MEM_opcode(MEM_opcode),
+        .MEM_funct3(MEM_funct3),
+        .raw_imm(raw_imm[11:0]),
+        .EX_raw_imm(EX_raw_imm[11:0]),
+        .csr_write_enable(cu_csr_write_enable),
+        .alu_result(alu_result[1:0]),
+        .MEM_alu_result(MEM_alu_result[1:0]),
+        .branch_target_lsbs(branch_target[1:0]),
+        .branch_estimation(branch_estimation),
+        .trapped(trapped),       // ???????
+        .trap_status(trap_status)
+    );
+
+    ForwardUnit forward_unit (
+        .hazard_mem(hazard_mem),
+        .hazard_wb(hazard_wb),
+        .MEM_imm(MEM_imm),
+        .MEM_alu_result(MEM_alu_result),
+        .MEM_csr_read_data(MEM_csr_read_data),
+        .byte_enable_logic_register_file_write_data(byte_enable_logic_register_file_write_data),
+        .MEM_pc_plus_4(MEM_pc_plus_4),
+        .MEM_opcode(MEM_opcode),
+        .WB_opcode(WB_opcode),
+        .WB_imm(WB_imm),
+        .WB_alu_result(WB_alu_result),
+        .WB_csr_read_data(WB_csr_read_data),
+        .WB_byte_enable_logic_register_file_write_data(WB_byte_enable_logic_register_file_write_data),
+        .WB_pc_plus_4(WB_pc_plus_4),
+        .alu_forward_source_data_a(alu_forward_source_data_a),
+        .alu_forward_source_data_b(alu_forward_source_data_b),
+        .alu_forward_source_data_c(alu_forward_source_data_c),
+        .alu_forward_source_select_a(alu_forward_source_select_a),
+        .alu_forward_source_select_b(alu_forward_source_select_b),
+        .alu_forward_source_select_c(alu_forward_source_select_c),
+        .store_forward_data(store_forward_data),
+        .store_forward_enable(store_forward_enable),
+        .csr_hazard_mem(csr_hazard_mem),
+        .csr_hazard_wb(csr_hazard_wb),
+        .MEM_csr_write_data(MEM_alu_result),
+        .WB_csr_write_data(WB_alu_result),
+        .store_hazard_mem(store_hazard_mem),
+        .store_hazard_wb(store_hazard_wb),
+        .csr_read_data(csr_read_out),
+        .csr_forward_data(csr_forward_data)
+    );
+
+    // ------------------------------------------------------------------
+    // HazardUnit
+    // ------------------------------------------------------------------
+    HazardUnit hazard_unit (
+        .clk(clk),
+        .reset(reset),
+        .manual_stall(manual_stall),
+        .trap_done(trap_done),
+        .standby_mode(standby_mode),
+        .trap_status(trap_status_eff),
+        .misaligned_instruction_flush(misaligned_instruction_flush),
+        .misaligned_memory_flush(misaligned_memory_flush),
+        .pth_done_flush(pth_done_flush),
+        .csr_ready(csr_ready),
+        .ID_rs1(rs1),
+        .ID_rs2(rs2),
+        .ID_raw_imm(raw_imm[11:0]),
+        .ID_opcode(opcode),
+        .ID_funct3(funct3),
+        .EX_csr_write_enable(EX_csr_write_enable),
+        .MEM_rd(MEM_rd),
+        .MEM_register_write_enable(MEM_register_write_enable),
+        .MEM_csr_write_enable(MEM_csr_write_enable),
+        .MEM_csr_write_address(MEM_raw_imm[11:0]),
+        .WB_rd(WB_rd),
+        .WB_register_write_enable(WB_register_write_enable),
+        .WB_csr_write_enable(WB_csr_write_enable),
+        .WB_csr_write_address(WB_raw_imm[11:0]),
+        .EX_rs1(EX_rs1),
+        .EX_rs2(EX_rs2),
+        .EX_rs3(EX_rs3),
+        .EX_funct7(EX_funct7),
+        .EX_rd(EX_rd),
+        .EX_opcode(EX_opcode),
+        .EX_imm(EX_raw_imm[11:0]),
+        .branch_prediction_miss(branch_prediction_miss),
+        .EX_jump(EX_jump),
+        .hazard_mem(hazard_mem),
+        .hazard_wb(hazard_wb),
+        .csr_hazard_mem(csr_hazard_mem),
+        .csr_hazard_wb(csr_hazard_wb),
+        .store_hazard_mem(store_hazard_mem),
+        .store_hazard_wb(store_hazard_wb),
+        .IF_ID_flush(IF_ID_flush),
+        .ID_EX_flush(ID_EX_flush),
+        .EX_MEM_flush(EX_MEM_flush),
+        .MEM_WB_flush(MEM_WB_flush),
+        .IF_ID_stall(IF_ID_stall),
+        .ID_EX_stall(ID_EX_stall),
+        .EX_MEM_stall(EX_MEM_stall),
+        .MEM_WB_stall(MEM_WB_stall),
+        .icache_stall(ic_stall)
+    );
+
+    ImmediateGenerator immediate_generator (
+        .raw_imm(raw_imm),
+        .opcode(opcode),
+        .imm(imm)
+    );
+
+    InstructionDecoder instruction_decoder (
+        .instruction(ID_instruction),
+        .opcode(opcode),
+        .funct3(funct3),
+        .funct7(funct7),
+        .rs1(rs1),
+        .rs2(rs2),
+        .rs3(rs3),
+        .rd(rd),
+        .raw_imm(raw_imm)
+    );
+
+    InstructionMemory #(
+        .ROM_INIT_FILE(ROM_INIT_FILE)
+    ) instruction_memory (
+        .cache_addr(ic_mem_addr),
+        .cache_data(rom_cache_data),
+        .rom_address(rom_address),
+        .rom_read_data(rom_read_data)
+    );
+
+    // ---- Instruction Cache (direct-mapped / 4-way, selectable via SW18) ----
+    InstructionCache icache (
+        .clk(clk),
+        .reset(reset),
+        .mode(icache_mode),
+        .cpu_addr(pc),
+        .cpu_stall(IF_ID_stall),     // don't fetch while the IF stage is frozen
+        .cpu_data(ic_cpu_data),
+        .cpu_ready(ic_ready),
+        .ic_stall(ic_stall),
+        .ic_access(ic_access),
+        .ic_hit(ic_hit),
+        .ic_miss(ic_miss),
+        .mem_addr(ic_mem_addr),
+        .mem_data(rom_cache_data),
+        .mem_req(ic_mem_req)
+    );
+
+    // ---- Performance Monitor: counts cycles / ICache stats ----
+    PerfMon perfmon (
+        .clk(clk),
+        .reset(reset),
+        .clear(perf_clear_req),
+        .hold(game_flags[30]),
+        .instruction_retired(instruction_retired),
+        .ic_access(ic_access),
+        .ic_hit(ic_hit),
+        .ic_miss(ic_miss),
+        .ic_mode(icache_mode),
+        .pipeline_stall((IF_ID_stall || ID_EX_stall || EX_MEM_stall || MEM_WB_stall) && !manual_stall),
+        .branch_retired(EX_branch && !ID_EX_stall),
+        .branch_mispredict(EX_branch && branch_prediction_miss),
+        .memory_retired((MEM_memory_read || MEM_memory_write) && !EX_MEM_stall),
+        .m_ext_retired(instruction_retired && (WB_instruction[6:0] == `OPCODE_RTYPE) && (WB_instruction[31:25] == 7'b0000001)),
+        .mac_retired(instruction_retired && (WB_instruction[6:0] == `OPCODE_FENCE) && (WB_instruction[31:25] == 7'b0000001)),
+        .r_cyc(perf_cyc),
+        .r_inst(perf_inst),
+        .r_acc(perf_acc),
+        .r_hit(perf_hit),
+        .r_miss(perf_miss),
+        .r_stall(perf_stall),
+        .r_branch(perf_branch),
+        .r_branch_miss(perf_branch_miss),
+        .r_memory(perf_memory),
+        .r_m_ext(perf_m_ext),
+        .r_mac(perf_mac),
+        .r_mul_cycles(perf_mul_cycles)
+    );
+
+    MMIO_Interface mmio_interface (
+        .clk(clk),
+        .reset(reset),
+        .data_memory_write_data(data_memory_write_data),
+        .data_memory_address(MEM_alu_result),
+        .data_memory_write_enable(MEM_memory_write),
+        .UART_busy(UART_busy),
+        .game_p1_buttons(game_p1_buttons),
+        .game_p2_buttons(game_p2_buttons),
+        .mmio_uart_tx_data(mmio_uart_tx_data),
+        .mmio_uart_status(mmio_uart_status),
+        .mmio_uart_tx_start(mmio_uart_tx_start),
+        .mmio_uart_status_hit(mmio_uart_status_hit),
+        .perf_dump_req(perf_clear_req),
+        .perf_cyc(perf_cyc),
+        .perf_inst(perf_inst),
+        .perf_acc(perf_acc),
+        .perf_hit(perf_hit),
+        .perf_miss(perf_miss),
+        .perf_stall(perf_stall),
+        .perf_branch(perf_branch),
+        .perf_branch_miss(perf_branch_miss),
+        .perf_memory(perf_memory),
+        .perf_m_ext(perf_m_ext),
+        .perf_mac(perf_mac),
+        .perf_mul_cycles(perf_mul_cycles),
+        .ic_mode(icache_mode),
+        .mmio_perf_read_data(mmio_perf_read_data),
+        .perf_read_hit(perf_read_hit),
+        .game_p1_x(game_p1_x),
+        .game_p1_y(game_p1_y),
+        .game_p2_x(game_p2_x),
+        .game_p2_y(game_p2_y),
+        .game_status(game_status),
+        .game_flags(game_flags),
+        .game_proj1_pos(game_proj1_pos),
+        .game_proj2_pos(game_proj2_pos),
+        .game_medicine_pos(game_medicine_pos),
+        .game_timer(game_timer),
+        .mmio_game_input_data(mmio_game_input_data),
+        .game_input_read_hit(game_input_read_hit)
+    );
+
+    ProgramCounter program_counter (
+        .clk(clk),
+        .reset(reset),
+        .next_pc(next_pc),
+        .pc(pc)
+    );
+
+    PCPlus4 pc_plus_4 (
+        .pc(pc),
+        .pc_plus_4(pc_plus_4_signal)
+    );
+
+    PCController pc_controller (
+        .jump(EX_jump),
+        .branch_estimation(branch_estimation),
+        .branch_prediction_miss(branch_prediction_miss),
+        .trapped(trapped | interrupt_taken),
+        .pc(pc),
+        .jump_target(alu_result),
+        .branch_target(branch_target),
+        .branch_target_actual(branch_target_actual),
+        .trap_target(trap_target),
+        .pc_stall(pc_stall),
+        .next_pc(next_pc)
+    );
+
+    RegisterFile register_file (
+        .clk(clk),
+        .read_reg1(rs1),
+        .read_reg2(rs2),
+        .read_reg3(rs3),
+        .write_reg(WB_rd),
+        .write_data(register_file_write_data),
+        .write_enable(WB_register_write_enable),
+        .read_data1(read_data1),
+        .read_data2(read_data2),
+        .read_data3(read_data3)
+    );
+
+    TrapController #(.XLEN(XLEN)) trap_controller (
+        .clk(clk),
+        .reset(reset),
+        .trap_status(trap_status_eff),
+        .ID_pc(ID_pc),
+        .EX_pc(EX_pc),
+        .MEM_pc(MEM_pc),
+        .WB_pc(WB_pc),
+        .trap_pc(pc),
+        .csr_read_data(csr_read_out),
+        .ic_clean(ic_clean),
+        .debug_mode(debug_mode),
+        .trap_target(trap_target),
+        .trap_done(trap_done),
+        .misaligned_instruction_flush(misaligned_instruction_flush),
+        .misaligned_memory_flush(misaligned_memory_flush),
+        .pth_done_flush(pth_done_flush),
+        .standby_mode(standby_mode),
+        .csr_write_enable(tc_csr_write_enable),
+        .csr_trap_address(csr_trap_address),
+        .csr_trap_write_data(csr_trap_write_data),
+        .interrupt_taken(interrupt_taken),
+        .tc_csr_access(tc_csr_access)
+    );
+
+    IF_ID_Register #(.XLEN(XLEN)) if_id_register (
+        .clk(clk),
+        .reset(reset),
+        .flush(IF_ID_flush),
+        .IF_ID_stall(IF_ID_stall),
+        .IF_pc(pc),
+        .IF_pc_plus_4(pc_plus_4_signal),
+        .IF_instruction(instruction),
+        .IF_branch_estimation(branch_estimation),
+        .ID_pc(ID_pc),
+        .ID_pc_plus_4(ID_pc_plus_4),
+        .ID_instruction(ID_instruction),
+        .ID_branch_estimation(ID_branch_estimation)
+    );
+
+    ID_EX_Register #(.XLEN(XLEN)) id_ex_register (
+        .clk(clk),
+        .reset(reset),
+        .flush(ID_EX_flush),
+        .ID_EX_stall(ID_EX_stall),
+        .ID_pc(ID_pc),
+        .ID_pc_plus_4(ID_pc_plus_4),
+        .ID_branch_estimation(ID_branch_estimation),
+        .ID_instruction(ID_instruction),
+        .ID_jump(jump),
+        .ID_branch(branch),
+        .ID_alu_src_A_select(alu_src_A_select),
+        .ID_alu_src_B_select(alu_src_B_select),
+        .ID_alu_src_C_select(alu_src_C_select),
+        .ID_memory_read(memory_read),
+        .ID_memory_write(memory_write),
+        .ID_register_file_write_data_select(register_file_write_data_select),
+        .ID_register_write_enable(register_file_write),
+        .ID_csr_write_enable(cu_csr_write_enable),
+        .ID_opcode(opcode), 
+        .ID_funct3(funct3),
+        .ID_funct7(funct7),
+        .ID_rd(rd),
+        .ID_raw_imm(raw_imm),
+        .ID_read_data1(read_data1),
+        .ID_read_data2(read_data2),
+        .ID_read_data3(read_data3),
+        .ID_rs1(rs1),
+        .ID_rs2(rs2),
+        .ID_rs3(rs3),
+        .ID_imm(imm),
+        .ID_csr_read_data(csr_read_out),
+        .EX_pc(EX_pc),
+        .EX_pc_plus_4(EX_pc_plus_4),
+        .EX_branch_estimation(EX_branch_estimation),
+        .EX_instruction(EX_instruction),
+        .EX_jump(EX_jump),
+        .EX_branch(EX_branch),
+        .EX_alu_src_A_select(EX_alu_src_A_select),
+        .EX_alu_src_B_select(EX_alu_src_B_select),
+        .EX_alu_src_C_select(EX_alu_src_C_select),
+        .EX_memory_read(EX_memory_read),
+        .EX_memory_write(EX_memory_write),
+        .EX_register_file_write_data_select(EX_register_file_write_data_select),
+        .EX_register_write_enable(EX_register_write_enable),
+        .EX_csr_write_enable(EX_csr_write_enable),
+        .EX_opcode(EX_opcode),
+        .EX_funct3(EX_funct3),
+        .EX_funct7(EX_funct7),
+        .EX_rd(EX_rd),
+        .EX_raw_imm(EX_raw_imm),
+        .EX_read_data1(EX_read_data1),
+        .EX_read_data2(EX_read_data2),
+        .EX_read_data3(EX_read_data3),
+        .EX_rs1(EX_rs1),
+        .EX_rs2(EX_rs2),
+        .EX_rs3(EX_rs3),
+        .EX_imm(EX_imm),
+        .EX_csr_read_data(EX_csr_read_data)
+    );
+
+    EX_MEM_Register #(.XLEN(XLEN)) ex_mem_register (
+        .clk(clk),
+        .reset(reset),
+        .flush(EX_MEM_flush),
+        .EX_MEM_stall(EX_MEM_stall),
+        .bubble(hazard_unit.csr_bubble),
+        .EX_pc(EX_pc),
+        .EX_pc_plus_4(EX_pc_plus_4),
+        .EX_instruction(EX_instruction),
+        .EX_memory_read(EX_memory_read),
+        .EX_memory_write(EX_memory_write),
+        .EX_register_file_write_data_select(EX_register_file_write_data_select),
+        .EX_register_write_enable(EX_register_write_enable),
+        .EX_csr_write_enable(EX_csr_write_enable),
+        .EX_opcode(EX_opcode),
+        .EX_funct3(EX_funct3),
+        .EX_rs1(EX_rs1),
+        .EX_rd(EX_rd),
+        .EX_raw_imm(EX_raw_imm),
+        .EX_read_data2(EX_read_data2_MUX),
+        .EX_imm(EX_imm),
+        .EX_csr_read_data(EX_csr_read_data),
+        .EX_alu_result(alu_result),
+        .MEM_pc(MEM_pc),
+        .MEM_pc_plus_4(MEM_pc_plus_4),
+        .MEM_instruction(MEM_instruction),
+        .MEM_memory_read(MEM_memory_read),
+        .MEM_memory_write(MEM_memory_write),
+        .MEM_register_file_write_data_select(MEM_register_file_write_data_select),
+        .MEM_register_write_enable(MEM_register_write_enable),
+        .MEM_csr_write_enable(MEM_csr_write_enable),
+        .MEM_opcode(MEM_opcode),
+        .MEM_funct3(MEM_funct3),
+        .MEM_rs1(MEM_rs1),
+        .MEM_rd(MEM_rd),
+        .MEM_raw_imm(MEM_raw_imm),
+        .MEM_read_data2(MEM_read_data2),
+        .MEM_imm(MEM_imm),
+        .MEM_csr_read_data(MEM_csr_read_data),
+        .MEM_alu_result(MEM_alu_result)
+    );
+
+    MEM_WB_Register #(.XLEN(XLEN)) mem_wb_register (
+        .clk(clk),
+        .reset(reset),
+        .MEM_WB_stall(MEM_WB_stall),
+        .flush(MEM_WB_flush),
+        .MEM_pc(MEM_pc),
+        .MEM_pc_plus_4(MEM_pc_plus_4),
+        .MEM_instruction(MEM_instruction),
+        .MEM_register_file_write_data_select(MEM_register_file_write_data_select),
+        .MEM_imm(MEM_imm),
+        .MEM_csr_read_data(MEM_csr_read_data),
+        .MEM_alu_result(MEM_alu_result),
+        .MEM_register_write_enable(MEM_register_write_enable),
+        .MEM_csr_write_enable(MEM_csr_write_enable),
+        .MEM_rs1(MEM_rs1),
+        .MEM_rd(MEM_rd),
+        .MEM_raw_imm(MEM_raw_imm),
+        .MEM_opcode(MEM_opcode),
+        .MEM_byte_enable_logic_register_file_write_data(byte_enable_logic_register_file_write_data),
+        .WB_pc(WB_pc),
+        .WB_pc_plus_4(WB_pc_plus_4),
+        .WB_instruction(WB_instruction),
+        .WB_register_file_write_data_select(WB_register_file_write_data_select),
+        .WB_imm(WB_imm),
+        .WB_csr_read_data(WB_csr_read_data),
+        .WB_alu_result(WB_alu_result),
+        .WB_register_write_enable(WB_register_write_enable),
+        .WB_csr_write_enable(WB_csr_write_enable),
+        .WB_rs1(WB_rs1),
+        .WB_rd(WB_rd),
+        .WB_raw_imm(WB_raw_imm),
+        .WB_opcode(WB_opcode),
+        .WB_byte_enable_logic_register_file_write_data(WB_byte_enable_logic_register_file_write_data)
+    );
+
+    // ------------------------------------------------------------
+    // ???????
+    // ------------------------------------------------------------
+
+    // ??????
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            retired_alu_result <= {XLEN{1'b0}};
+            retired_csr_read_data <= {XLEN{1'b0}};
+            instruction_retired_reg <= 1'b0;
+        end else begin
+            retired_alu_result <= WB_alu_result;
+            retired_csr_read_data <= WB_csr_read_data;
+
+            if (!MEM_WB_stall && !MEM_WB_flush && 
+                WB_instruction != 32'h00000013) begin
+                instruction_retired_reg <= 1'b1;
+            end else begin
+                instruction_retired_reg <= 1'b0;
+            end
+        end
+    end
+
+    assign instruction_retired = instruction_retired_reg;   // ??????
+
+    // ALU ?????????
+    always @(*) begin
+        if (EX_alu_src_A_select == `ALU_SRC_A_RD1) begin
+            alu_normal_source_a = EX_read_data1;
+        end
+        else if (EX_alu_src_A_select == `ALU_SRC_A_PC) begin
+            alu_normal_source_a = EX_pc;
+        end
+        else if (EX_alu_src_A_select == `ALU_SRC_A_RS1) begin
+            alu_normal_source_a = {27'b0, EX_rs1};
+        end
+        else begin
+            alu_normal_source_a = 32'b0;
+        end
+
+        if (EX_alu_src_B_select == `ALU_SRC_B_RD2) begin
+            alu_normal_source_b = EX_read_data2;
+        end
+        else if (EX_alu_src_B_select == `ALU_SRC_B_IMM) begin
+            alu_normal_source_b = EX_imm;
+        end
+        else if (EX_alu_src_B_select == `ALU_SRC_B_SHAMT) begin
+            alu_normal_source_b = {27'b0, EX_imm[4:0]};
+        end
+        else if (EX_alu_src_B_select == `ALU_SRC_B_CSR) begin
+            // CRITICAL: for CSRRS/CSRRC/CSRRSI/CSRRCI the CSR write value is
+            // (old_csr OP src). The "old_csr" must be the value latched into
+            // EX_csr_read_data at the ID->EX boundary for THIS instruction, NOT
+            // the live csr_read_out/csr_forward_data. csr_read_out is
+            // combinational on the ID-stage instruction's CSR address
+            // (csr_read_address = raw_imm[11:0]); when this CSR instruction is
+            // in EX, the ID stage holds a DIFFERENT (often gap/NOP) instruction,
+            // so the live value would be wrong (e.g. 0 for a NOP -> mtvec gets
+            // written with src only). The RAW stall (Hazard_Unit) already holds
+            // the instruction in ID until any prior CSR write has committed, so
+            // EX_csr_read_data (captured at the crossing) is always the
+            // post-write value -- exactly what the write needs.
+            alu_normal_source_b = EX_csr_read_data;
+        end
+        else begin
+            alu_normal_source_b = 32'b0;
+        end
+    end
+
+    // CSR ?/????????
+    always @(*) begin
+        if (tc_csr_access) begin
+            csr_write_data  = csr_trap_write_data;
+            csr_write_address = csr_trap_address;
+            csr_read_address = csr_trap_address;
+        end
+        else begin
+            csr_write_data = WB_alu_result;
+            csr_write_address = WB_raw_imm[11:0];
+            csr_read_address = raw_imm[11:0];
+        end
+    end
+
+    // ???????????EBREAK????????
+    always @(*) begin
+        if (debug_mode) instruction = dbg_instruction;
+        else instruction = ic_cpu_data;
+    end
+
+    // ??????????
+    always @(*) begin
+        case (WB_register_file_write_data_select)
+            `RF_WD_LOAD: begin
+                register_file_write_data = WB_byte_enable_logic_register_file_write_data;
+            end
+            `RF_WD_ALU: begin
+                register_file_write_data = WB_alu_result;
+            end
+            `RF_WD_LUI: begin
+                register_file_write_data = WB_imm;
+            end
+            `RF_WD_JUMP: begin
+                register_file_write_data = WB_pc_plus_4;
+            end
+            `RF_WD_CSR: begin
+                register_file_write_data = WB_csr_read_data; 
+            end
+            default: begin
+                register_file_write_data = 32'b0;
+            end
+        endcase
+    end
+
+    // ALU ????
+    always @(*) begin
+        case (alu_forward_source_select_a)
+            2'b10: src_A = alu_forward_source_data_a;
+            2'b11: src_A = alu_forward_source_data_a;
+            default: src_A = alu_normal_source_a;
+        endcase
+
+        case (alu_forward_source_select_b)
+            2'b10: src_B = alu_forward_source_data_b;
+            2'b11: src_B = alu_forward_source_data_b;
+            default: src_B = alu_normal_source_b;
+        endcase
+
+        case (alu_forward_source_select_c)
+            2'b10, 2'b11: src_C = alu_forward_source_data_c;
+            default: src_C = EX_alu_src_C_select ? EX_read_data3 : 32'b0;
+        endcase
+    end
+
+    // ????
+    // debug_pc ??IF ???PC(pc), debug_instruction ????????PC??????
+    // ??(im_instruction = data[pc[31:2]]), ???????????????????
+    // ????? WB_instruction(????4?????), ????? PC ??????????????
+    assign debug_pc = pc;
+    assign debug_instruction = ic_cpu_data;
+    assign debug_reg_addr = WB_rd;
+    assign debug_reg_data = register_file_write_data;
+    assign debug_alu_result = WB_alu_result;
+
+endmodule
